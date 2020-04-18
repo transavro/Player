@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="search_opaque">#0096FF</color>
+    <color name="transparent">#00000000</color>
+    <color name="back_transparent">#63000000</color>
+</resources>
