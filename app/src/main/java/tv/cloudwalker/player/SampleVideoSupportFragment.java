@@ -1,6 +1,7 @@
 package tv.cloudwalker.player;
 
 import android.app.Activity;
+import android.content.DialogInterface;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Build;
@@ -10,6 +11,7 @@ import android.util.Log;
 import android.widget.Toast;
 
 import androidx.annotation.Nullable;
+import androidx.appcompat.app.AlertDialog;
 import androidx.fragment.app.Fragment;
 import androidx.fragment.app.FragmentTransaction;
 import androidx.leanback.app.VideoSupportFragmentGlueHost;
@@ -17,6 +19,8 @@ import androidx.leanback.media.MediaPlayerAdapter;
 import androidx.leanback.media.PlaybackGlue;
 import androidx.leanback.widget.Action;
 import androidx.leanback.widget.PlaybackControlsRow;
+
+import com.google.protobuf.InvalidProtocolBufferException;
 
 import java.util.concurrent.Executor;
 
@@ -46,11 +50,17 @@ public class SampleVideoSupportFragment extends androidx.leanback.app.VideoSuppo
     final VideoSupportFragmentGlueHost mHost = new VideoSupportFragmentGlueHost(SampleVideoSupportFragment.this);
 
     private String currentDataSource = "";
+    private String currentTitle = "";
+    private String currentSubtitle = "";
     private String token = "";
     private int roomId = 0;
 
-    private boolean isTV = false;
-    private boolean isRoomMade , isJointRoom;
+    private boolean isTV = true;
+
+
+    private boolean isRoomMade  = false;
+    private boolean isJointRoom = false;
+
 
     private StreamObserver<Wewatch.StreamRequest> streamRequestStreamObserver;
 
@@ -58,7 +68,6 @@ public class SampleVideoSupportFragment extends androidx.leanback.app.VideoSuppo
     static void playWhenReady(PlaybackGlue glue) {
         if (glue.isPrepared()) {
             glue.play();
-
         } else {
             glue.addPlayerCallback(new PlaybackGlue.PlayerCallback() {
                 @Override
@@ -103,7 +112,7 @@ public class SampleVideoSupportFragment extends androidx.leanback.app.VideoSuppo
         if (weWatchStub == null) {
             initServer();
         }
-        weWatchStub.login(Wewatch.LoginRequest.newBuilder().setName("tv").setPassword("cloudwalker").build(), new StreamObserver<Wewatch.LoginResponse>() {
+        weWatchStub.login(Wewatch.LoginRequest.newBuilder().setName("tv1").setPassword("cloudwalker").build(), new StreamObserver<Wewatch.LoginResponse>() {
             @Override
             public void onNext(Wewatch.LoginResponse value) {
                 Log.i(TAG, "onNext: login ");
@@ -112,7 +121,7 @@ public class SampleVideoSupportFragment extends androidx.leanback.app.VideoSuppo
 
             @Override
             public void onError(Throwable t) {
-                Log.e(TAG, "onError: login ", t.getCause());
+                Log.e(TAG, "onError: login", t.getCause());
             }
 
             @Override
@@ -121,6 +130,8 @@ public class SampleVideoSupportFragment extends androidx.leanback.app.VideoSuppo
             }
         });
     }
+
+
 
     private void logout() {
         if (weWatchStub == null) {
@@ -150,7 +161,9 @@ public class SampleVideoSupportFragment extends androidx.leanback.app.VideoSuppo
         if (weWatchStub == null) {
             return;
         }
-        weWatchStub.makeRoom(Wewatch.MakeRoomRequest.newBuilder().setToken(token).build(), new StreamObserver<Wewatch.MakeRoomResponse>() {
+        weWatchStub.makeRoom(Wewatch.MakeRoomRequest.newBuilder().setTkn(token)
+                .setRoomMeta(Wewatch.RoomMeta.newBuilder().setUrl(currentDataSource).setTitle(currentTitle).setSubtitle(currentSubtitle).build())
+                .build(), new StreamObserver<Wewatch.MakeRoomResponse>() {
             @Override
             public void onNext(Wewatch.MakeRoomResponse value) {
                 Log.i(TAG, "onNext: Make room ");
@@ -181,11 +194,13 @@ public class SampleVideoSupportFragment extends androidx.leanback.app.VideoSuppo
 
     private void synceMe(Action action) {
         if (action.getId() == R.id.lb_control_play_pause) {
+
             if (mMediaPlayerGlue.isPlaying()) {
-                streamRequestStreamObserver.onNext(Wewatch.StreamRequest.newBuilder().setPlayerState(Wewatch.PlayerStates.PLAY).build());
-            } else {
                 streamRequestStreamObserver.onNext(Wewatch.StreamRequest.newBuilder().setPlayerState(Wewatch.PlayerStates.PAUSE).build());
+            } else {
+                streamRequestStreamObserver.onNext(Wewatch.StreamRequest.newBuilder().setPlayerState(Wewatch.PlayerStates.PLAY).build());
             }
+
         } else if (action.getId() == R.id.lb_control_fast_forward) {
             streamRequestStreamObserver.onNext(Wewatch.StreamRequest.newBuilder().setPlayerState(Wewatch.PlayerStates.FORWARD).build());
         } else if (action.getId() == R.id.lb_control_fast_rewind) {
@@ -211,11 +226,11 @@ public class SampleVideoSupportFragment extends androidx.leanback.app.VideoSuppo
                     }
                     return;
                 } else if (action.getId() == 7777) {
-
-                    if(!isJointRoom){
+                    Log.i(TAG, "onActionClicked: room status "+isJointRoom +"   "+isRoomMade);
+                    if(!isJointRoom && roomId != 0){
                         Toast.makeText(getActivity(), "You have already joined a room with Id "+roomId, Toast.LENGTH_SHORT).show();
                         return;
-                    }else if(!isRoomMade){
+                    }else if(!isRoomMade && !isJointRoom){
                         makeRoom();
                         action.setIcon(getResources().getDrawable(R.drawable.broadcastblack));
                         action.setLabel1(String.valueOf(roomId));
@@ -253,14 +268,17 @@ public class SampleVideoSupportFragment extends androidx.leanback.app.VideoSuppo
                     mSecondCompleted = true;
 
                     if (!isTV) {
-
-                        mMediaPlayerGlue.setSubtitle("Dummy Video SubTitle");
-                        mMediaPlayerGlue.setTitle("Bunny Honey.");
+                        currentTitle = "Bunny Honey.";
+                        currentSubtitle = "Dummy Video SubTitle";
+                        mMediaPlayerGlue.setSubtitle(currentSubtitle);
+                        mMediaPlayerGlue.setTitle(currentTitle);
                         currentDataSource = "http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4";
 
                     } else {
-                        mMediaPlayerGlue.setSubtitle("Leanback artist Changed!");
-                        mMediaPlayerGlue.setTitle("Leanback team at work");
+                        currentTitle  = "Leanback team at work";
+                        currentSubtitle = "Leanback artist Changed!";
+                        mMediaPlayerGlue.setSubtitle(currentSubtitle);
+                        mMediaPlayerGlue.setTitle(currentTitle);
                         currentDataSource = "https://storage.googleapis.com/android-tv/Sample videos/April Fool's 2013/Explore Treasure Mode with Google Maps.mp4";
                     }
 
@@ -273,23 +291,52 @@ public class SampleVideoSupportFragment extends androidx.leanback.app.VideoSuppo
             }
         });
 
-
-        if (!isTV) {
-            mMediaPlayerGlue.setSubtitle("Leanback artist Changed!");
-            mMediaPlayerGlue.setTitle("Leanback team at work");
-            currentDataSource = "https://storage.googleapis.com/android-tv/Sample videos/April Fool's 2013/Explore Treasure Mode with Google Maps.mp4";
-        } else {
-
-            mMediaPlayerGlue.setSubtitle("Dummy Video SubTitle");
-            mMediaPlayerGlue.setTitle("Bunny Honey.");
-            currentDataSource = "http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4";
-        }
-
-        mMediaPlayerGlue.getPlayerAdapter().setDataSource(Uri.parse(currentDataSource));
-        mMediaPlayerGlue.setSeekEnabled(false);
-        playWhenReady(mMediaPlayerGlue);
-
         login();
+
+        selectSource();
+    }
+
+
+    private void selectSource(){
+
+
+        AlertDialog.Builder builder = new AlertDialog.Builder(getActivity(), R.style.Theme_AppCompat);
+        builder.setNegativeButton("Back", new DialogInterface.OnClickListener() {
+            @Override
+            public void onClick(DialogInterface dialog, int which) {
+                dialog.dismiss();
+            }
+        });
+
+        builder.setTitle("Select Source to play.");
+        builder.setCancelable(true);
+
+
+        final String[] animals = {
+                "http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
+                "http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerMeltdowns.mp4",
+                "http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4",
+                "http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
+                "http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4"
+        };
+        builder.setItems(animals, new DialogInterface.OnClickListener() {
+            @Override
+            public void onClick(DialogInterface dialog, int which) {
+                currentTitle = "Video "+ which;
+                currentSubtitle = "subtitle "+ which;
+                mMediaPlayerGlue.setSubtitle(currentSubtitle);
+                mMediaPlayerGlue.setTitle(currentTitle);
+                currentDataSource = animals[which];
+                mMediaPlayerGlue.getPlayerAdapter().setDataSource(Uri.parse(currentDataSource));
+                mMediaPlayerGlue.setSeekEnabled(false);
+                playWhenReady(mMediaPlayerGlue);
+                dialog.dismiss();
+            }
+        });
+
+        // create and show the alert dialog
+        AlertDialog dialog = builder.create();
+        dialog.show();
     }
 
     private void showDialogPopUp() {
@@ -311,13 +358,44 @@ public class SampleVideoSupportFragment extends androidx.leanback.app.VideoSuppo
         if (requestCode == DIALOG_REQUEST_CODE) {
             if (resultCode == Activity.RESULT_OK) {
                 if (data.getExtras().containsKey("roomId")) {
-                    roomId = data.getExtras().getInt("roomId");
-                    Log.i(TAG, "addedToRoom: !!! ");
-                    ((PlaybackControlsRow.MoreActions)mMediaPlayerGlue.getControlsRow().getPrimaryActionsAdapter().get(4))
-                            .setIcon(getResources().getDrawable(R.drawable.add_in_room_black));
-                    mMediaPlayerGlue.getControlsRow().getPrimaryActionsAdapter().notifyItemRangeChanged(4,1);
-                    isJointRoom = true;
-                    startStreaming();
+                    try {
+                        roomId = data.getExtras().getInt("roomId");
+                        final Wewatch.RoomMeta roomMeta =  Wewatch.RoomMeta.parseFrom(data.getExtras().getByteArray(Wewatch.RoomMeta.class.getSimpleName()));
+
+                        currentTitle  = roomMeta.getTitle();
+                        currentSubtitle = roomMeta.getSubtitle();
+                        mMediaPlayerGlue.setSubtitle(currentSubtitle);
+                        mMediaPlayerGlue.setTitle(currentTitle);
+                        currentDataSource = roomMeta.getUrl();
+                        mMediaPlayerGlue.getPlayerAdapter().setDataSource(Uri.parse(currentDataSource));
+                        mMediaPlayerGlue.setHost(mHost);
+
+                        if (mMediaPlayerGlue.isPrepared()) {
+                            mMediaPlayerGlue.play();
+                            mMediaPlayerGlue.seekTo(roomMeta.getDuration());
+                        } else {
+                            mMediaPlayerGlue.addPlayerCallback(new PlaybackGlue.PlayerCallback() {
+                                @Override
+                                public void onPreparedStateChanged(PlaybackGlue glue) {
+                                    if (glue.isPrepared()) {
+                                        glue.removePlayerCallback(this);
+                                        glue.play();
+                                        mMediaPlayerGlue.seekTo(roomMeta.getDuration());
+                                    }
+                                }
+                            });
+                        }
+
+                        Log.i(TAG, "addedToRoom: !!! ");
+                        ((PlaybackControlsRow.MoreActions)mMediaPlayerGlue.getControlsRow().getPrimaryActionsAdapter().get(4))
+                                .setIcon(getResources().getDrawable(R.drawable.add_in_room_black));
+                        mMediaPlayerGlue.getControlsRow().getPrimaryActionsAdapter().notifyItemRangeChanged(4,1);
+                        isJointRoom = true;
+                        startStreaming();
+
+                    } catch (InvalidProtocolBufferException e) {
+                        e.printStackTrace();
+                    }
                 }
             }
         }
@@ -327,12 +405,15 @@ public class SampleVideoSupportFragment extends androidx.leanback.app.VideoSuppo
         streamRequestStreamObserver = weWatchStub.stream(new StreamObserver<Wewatch.StreamResponse>() {
             @Override
             public void onNext(Wewatch.StreamResponse value) {
+
                 if(value.getClientMessage() != null){
                     if(value.getClientMessage().getPlayerState() == Wewatch.PlayerStates.PLAY){
                         getActivity().runOnUiThread(new Runnable() {
                             @Override
                             public void run() {
-                                mMediaPlayerGlue.play();
+                                if(! mMediaPlayerGlue.isPlaying()){
+                                    mMediaPlayerGlue.play();
+                                }
                             }
                         });
 
@@ -340,7 +421,9 @@ public class SampleVideoSupportFragment extends androidx.leanback.app.VideoSuppo
                         getActivity().runOnUiThread(new Runnable() {
                             @Override
                             public void run() {
-                                mMediaPlayerGlue.pause();
+                                if(mMediaPlayerGlue.isPlaying()){
+                                    mMediaPlayerGlue.pause();
+                                }
                             }
                         });
 
@@ -378,7 +461,6 @@ public class SampleVideoSupportFragment extends androidx.leanback.app.VideoSuppo
         });
     }
 
-
     @Override
     public void onPause() {
         if (mMediaPlayerGlue != null) {
@@ -391,15 +473,12 @@ public class SampleVideoSupportFragment extends androidx.leanback.app.VideoSuppo
     public void onStart() {
         super.onStart();
         Log.i(TAG, "onStart: ");
-
         ((VideoSupportActivity) getActivity()).registerPictureInPictureListener(this);
     }
 
     @Override
     public void onStop() {
         Log.d(TAG, "onStop: ");
-
-
         ((VideoSupportActivity) getActivity()).unregisterPictureInPictureListener(this);
         super.onStop();
     }
@@ -432,12 +511,15 @@ public class SampleVideoSupportFragment extends androidx.leanback.app.VideoSuppo
         mMediaPlayerGlue.connectToMediaSession(mMediaSessionCompat);
 
         mMediaPlayerGlue.setMode(PlaybackControlsRow.RepeatAction.INDEX_ONE);
-        mMediaPlayerGlue.setSubtitle("A Googler");
-        mMediaPlayerGlue.setTitle("Swimming with the fishes");
+
+
+        currentTitle  = "Swimming with the fishes";
+        currentSubtitle = "A Googler";
+        mMediaPlayerGlue.setSubtitle(currentSubtitle);
+        mMediaPlayerGlue.setTitle(currentTitle);
         currentDataSource = "http://techslides.com/demos/sample-videos/small.mp4";
         mMediaPlayerGlue.getPlayerAdapter().setDataSource(Uri.parse(currentDataSource));
         mMediaPlayerGlue.setHost(mHost);
         playWhenReady(mMediaPlayerGlue);
     }
-
 }

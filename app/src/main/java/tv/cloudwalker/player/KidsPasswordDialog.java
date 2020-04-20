@@ -173,10 +173,11 @@ public class KidsPasswordDialog extends DialogFragment implements View.OnClickLi
 
                 Log.d(TAG, "onClick: target id " + groupId);
 
-                weWatchStub.joinRoom(Wewatch.JoinRoomRequest.newBuilder().setToken(token).setRoomId(Integer.parseInt(groupId)).build(), new StreamObserver<Wewatch.JoinRoomResponse>() {
+                weWatchStub.joinRoom(Wewatch.JoinRoomRequest.newBuilder().setToken(token).setRoomId(Integer.parseInt(groupId)).build()
+                        , new StreamObserver<Wewatch.JoinRoomResponse>() {
 
                     @Override
-                    public void onNext(Wewatch.JoinRoomResponse value) {
+                    public void onNext(final Wewatch.JoinRoomResponse value) {
                         Log.i(TAG, "onNext: join room ");
                         switch (value.getJointState()) {
                             case ADDED: {
@@ -186,6 +187,7 @@ public class KidsPasswordDialog extends DialogFragment implements View.OnClickLi
                                         Toast.makeText(getContext(), "Added to group !!", Toast.LENGTH_SHORT).show();
                                         Bundle bundle = new Bundle();
                                         bundle.putInt("roomId", Integer.parseInt(groupId));
+                                        bundle.putByteArray(Wewatch.RoomMeta.class.getSimpleName(), value.getRoomMeta().toByteArray());
                                         Intent intent = new Intent().putExtras(bundle);
                                         getTargetFragment().onActivityResult(getTargetRequestCode(), Activity.RESULT_OK, intent);
                                         KidsPasswordDialog.this.dismiss();
