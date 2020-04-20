@@ -1,15 +1,14 @@
 package tv.cloudwalker.player;
 
-import android.media.AudioManager;
+import android.app.Activity;
+import android.content.Intent;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.support.v4.media.session.MediaSessionCompat;
 import android.util.Log;
-import android.view.View;
 import android.widget.Toast;
 
-import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.fragment.app.Fragment;
 import androidx.fragment.app.FragmentTransaction;
@@ -19,39 +18,41 @@ import androidx.leanback.media.PlaybackGlue;
 import androidx.leanback.widget.Action;
 import androidx.leanback.widget.PlaybackControlsRow;
 
-import java.io.BufferedReader;
-import java.io.FileReader;
-import java.io.IOException;
-import java.lang.reflect.Method;
+import java.util.concurrent.Executor;
 
+import cloudwalker.WeWatchGrpc;
+import cloudwalker.Wewatch;
+import io.grpc.CallCredentials;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
+import io.grpc.Metadata;
+import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
-import main.MediaChatServiceGrpc;
-import main.Watch;
-
-import static main.Watch.PlayerState.PLAY;
 
 public class SampleVideoSupportFragment extends androidx.leanback.app.VideoSupportFragment implements VideoSupportActivity.PictureInPictureListener {
 
-    private static final String TAG = "##SVSF##";
+    private static final String TAG = "NayanMakasare";
     // Media Session Token
     private static final String MEDIA_SESSION_COMPAT_TOKEN = "media session support video";
+    private static final int DIALOG_REQUEST_CODE = 1234;
+    private static final String DIALOG_TAG = "dialog";
 
     private PlaybackTransportControlGlueSample<MediaPlayerAdapter> mMediaPlayerGlue;
 
     private MediaSessionCompat mMediaSessionCompat;
     private ManagedChannel managedChannel;
+    private WeWatchGrpc.WeWatchStub weWatchStub;
 
     final VideoSupportFragmentGlueHost mHost = new VideoSupportFragmentGlueHost(SampleVideoSupportFragment.this);
 
     private String currentDataSource = "";
+    private String token = "";
+    private int roomId = 0;
 
     private boolean isTV = false;
+    private boolean isRoomMade , isJointRoom;
 
-    //grpc
-    private int sourceId, targetId;
-    private MediaChatServiceGrpc.MediaChatServiceStub mediaChatServiceStub;
+    private StreamObserver<Wewatch.StreamRequest> streamRequestStreamObserver;
 
 
     static void playWhenReady(PlaybackGlue glue) {
@@ -71,346 +72,173 @@ public class SampleVideoSupportFragment extends androidx.leanback.app.VideoSuppo
         }
     }
 
-    static void loadSeekData(final PlaybackTransportControlGlueSample glue) {
-        if (glue.isPrepared()) {
-            glue.setSeekProvider(new PlaybackSeekDiskDataProvider(glue.getDuration(), glue.getDuration() / 100, "/data/user/0/tv.cloudwalker.player/files/seek/frame_%04d.jpg"));
-        } else {
-            glue.addPlayerCallback(new PlaybackGlue.PlayerCallback() {
-                @Override
-                public void onPreparedStateChanged(PlaybackGlue glue) {
-                    if (glue.isPrepared()) {
-                        glue.removePlayerCallback(this);
-                        PlaybackTransportControlGlueSample transportControlGlue = (PlaybackTransportControlGlueSample) glue;
-                        transportControlGlue.setSeekProvider(new PlaybackSeekDiskDataProvider(transportControlGlue.getDuration(), transportControlGlue.getDuration() / 100, "/data/user/0/tv.cloudwalker.player/files/seek/frame_%04d.jpg"));
-                    }
-                }
-            });
-        }
-    }
-
-
-    private void setServer() {
+    private void initServer() {
         Log.i(TAG, "setServer: ");
-
-        managedChannel = ManagedChannelBuilder.forAddress("192.168.1.9", 5000).usePlaintext().build();
-//        managedChannel  = ManagedChannelBuilder.forTarget("dev.cloudwalker.tv:80").usePlaintext().build();
-        mediaChatServiceStub = MediaChatServiceGrpc.newStub(managedChannel);
-        authMe();
-    }
-
-    private String getEthMacAddress() {
-        try {
-            return loadFileAsString("/sys/class/net/eth0/address").toUpperCase().substring(0, 17);
-        } catch (IOException e) {
-            e.printStackTrace();
-            return null;
-        }
-    }
-
-    private String loadFileAsString(String filePath) throws java.io.IOException {
-        StringBuffer fileData = new StringBuffer(1000);
-        BufferedReader reader = new BufferedReader(new FileReader(filePath));
-        char[] buf = new char[1024];
-        int numRead;
-        while ((numRead = reader.read(buf)) != -1) {
-            String readData = String.valueOf(buf, 0, numRead);
-            fileData.append(readData);
-        }
-        reader.close();
-        return fileData.toString();
-    }
-
-    private void authMe() {
-        // get Authorized with ChatServer
-
-        String device = "5510TV";
-//        if(isTV){
-//            device = getEthMacAddress();
-//        }
-
-
-        mediaChatServiceStub.authorize(Watch.RequestAuthorize.newBuilder().setName(device).build(), new StreamObserver<Watch.ResponseAuthorize>() {
+        managedChannel = ManagedChannelBuilder.forAddress("192.168.0.106", 5000).usePlaintext().build();
+        weWatchStub = WeWatchGrpc.newStub(managedChannel).withCallCredentials(new CallCredentials() {
             @Override
-            public void onNext(Watch.ResponseAuthorize value) {
-                sourceId = value.getSessionId();
-                Log.d(TAG, "onNext: authorize " + sourceId);
-            }
-
-            @Override
-            public void onError(Throwable t) {
-                Log.e(TAG, "onError: authorize ", t.getCause());
-            }
-
-            @Override
-            public void onCompleted() {
-                Log.i(TAG, "onCompleted: authorize MYID ===>" + sourceId);
-                connectMe();
-                mMediaPlayerGlue.setSubtitle(String.valueOf(sourceId));
-            }
-        });
-    }
-
-    private void syncingPlayer(final Watch.PlayerMeta playerMeta) {
-
-        if (playerMeta.getTitle() != null && !playerMeta.getTitle().isEmpty() && !mMediaPlayerGlue.getTitle().equals(playerMeta.getTitle())) {
-            Log.d(TAG, "syncingPlayer: setting new title");
-            mMediaPlayerGlue.setTitle(playerMeta.getTitle());
-        }
-        if (playerMeta.getSubtitle() != null && !playerMeta.getSubtitle().isEmpty() && !mMediaPlayerGlue.getSubtitle().equals(playerMeta.getSubtitle())) {
-            Log.d(TAG, "syncingPlayer: setting new subtitle");
-            mMediaPlayerGlue.setSubtitle(playerMeta.getSubtitle());
-        }
-        if (playerMeta.getUrl() != null && !playerMeta.getUrl().isEmpty() && !currentDataSource.equals(playerMeta.getUrl())) {
-            Log.d(TAG, "syncingPlayer: setting new URL ");
-            currentDataSource = playerMeta.getUrl();
-            mMediaPlayerGlue.getPlayerAdapter().setDataSource(Uri.parse(currentDataSource));
-            playWhenReady(mMediaPlayerGlue);
-        }
-        Log.d(TAG, "syncingPlayer: cp= "+mMediaPlayerGlue.getCurrentPosition()+" sp = "+playerMeta.getCurrentPosition()+" diff = "+(playerMeta.getCurrentPosition() - mMediaPlayerGlue.getCurrentPosition() ));
-        if (playerMeta.getCurrentPosition() != 0) {
-
-
-            if(playerMeta.getCurrentPosition() != mMediaPlayerGlue.getCurrentPosition()) {
-                mMediaPlayerGlue.getPlayerAdapter().seekTo(playerMeta.getCurrentPosition());
-            }
-
-//            if(playerMeta.getCurrentPosition() - mMediaPlayerGlue.getCurrentPosition() < 0 ){
-//                Toast.makeText(getActivity(), "Parent Player seems to be lagy !! Matching parent seekbar...", Toast.LENGTH_SHORT).show();
-//                mMediaPlayerGlue.seekTo(playerMeta.getCurrentPosition());
-//
-//            }else {
-//
-//                if((playerMeta.getCurrentPosition() - mMediaPlayerGlue.getCurrentPosition() > 1000)){
-//                    Log.d(TAG, "syncingPlayer: re seeking...");
-//                    mMediaPlayerGlue.addPlayerCallback(new PlaybackGlue.PlayerCallback() {
-//                        @Override
-//                        public void onPreparedStateChanged(PlaybackGlue glue) {
-//                            if (glue.isPrepared()) {
-//                                glue.removePlayerCallback(this);
-//                                mMediaPlayerGlue.getPlayerAdapter().seekTo(playerMeta.getCurrentPosition());
-//                            }
-//                        }
-//                    });
-//                }
-//            }
-        }
-    }
-
-    private void connectMe() {
-        mediaChatServiceStub.connect(Watch.RequestConnect.newBuilder().setSessionId(sourceId).build(), new StreamObserver<Watch.Event>() {
-            @Override
-            public void onNext(final Watch.Event value) {
-                if (value.getLog() != null && value.getLog().hasPlayerMeta() && !value.getLog().getPlayerMeta().getPlayerState().equals(Watch.PlayerState.UNKNOWN)) {
-                    Log.i(TAG, "onNext: connect " + value.getLog());
-                    getActivity().runOnUiThread(new Runnable() {
-                        @Override
-                        public void run() {
-                            syncingPlayer(value.getLog().getPlayerMeta());
-                        }
-                    });
-
-                    switch (value.getLog().getPlayerMeta().getPlayerState()) {
-                        case PLAY: {
-                            getActivity().runOnUiThread(new Runnable() {
-                                @Override
-                                public void run() {
-                                    mMediaPlayerGlue.play();
-                                }
-                            });
-                        }
-                        break;
-                        case REWIND: {
-                            getActivity().runOnUiThread(new Runnable() {
-                                @Override
-                                public void run() {
-                                    mMediaPlayerGlue.rewind();
-                                }
-                            });
-                        }
-                        break;
-                        case PAUSE: {
-                            getActivity().runOnUiThread(new Runnable() {
-                                @Override
-                                public void run() {
-                                    mMediaPlayerGlue.pause();
-                                }
-                            });
-                        }
-                        break;
-                        case FORWARD: {
-                            getActivity().runOnUiThread(new Runnable() {
-                                @Override
-                                public void run() {
-                                    mMediaPlayerGlue.fastForward();
-                                }
-                            });
-                        }
-                        break;
-                        case VOLUMN_UP: {
-                            Log.i(TAG, "onNext:connect volumn up");
-                            mMediaSessionCompat.getController().adjustVolume(AudioManager.ADJUST_RAISE, AudioManager.FLAG_SHOW_UI);
-                        }
-                        break;
-                        case VOLUMN_DOWN: {
-                            Log.i(TAG, "onNext:  connect volumn down");
-                            mMediaSessionCompat.getController().adjustVolume(AudioManager.ADJUST_LOWER, AudioManager.FLAG_SHOW_UI);
-                        }
-                        case SYNC: {
-
-
-                            targetId = value.getLog().getSouceId();
-                            Log.d(TAG, "onNext: ************************* connect SYNc "+value.getLog().getSouceId());
-
-
-                            // trigger for the content to be player in other player.
-                            mediaChatServiceStub.player(Watch.MediaChat.newBuilder()
-                                    .setSourceId(sourceId)
-                                    .setTargetId(targetId)
-                                    .setPlayerMeta(Watch.PlayerMeta.newBuilder()
-                                            .setPlayerState(PLAY)
-                                            .setTitle(mMediaPlayerGlue.getTitle().toString())
-                                            .setSubtitle(mMediaPlayerGlue.getSubtitle().toString())
-                                            .setUrl(currentDataSource)
-                                            .setCurrentPosition(mMediaPlayerGlue.getCurrentPosition()).build()
-                                    ).build(), null);
-
-                        }
-                        break;
-                    }
-                }
-            }
-
-            @Override
-            public void onError(Throwable t) {
-                Log.e(TAG, "onError: connect ", t.getCause());
-            }
-
-            @Override
-            public void onCompleted() {
-                Log.i(TAG, "onCompleted: connect ");
-            }
-        });
-    }
-
-    private void syncMe(Action action) {
-
-        Watch.PlayerState playerState = null;
-
-        if (action.getId() == R.id.lb_control_thumbs_down) {
-
-        } else if (action.getId() == R.id.lb_control_thumbs_up) {
-
-        } else if (action.getId() == R.id.lb_control_play_pause) {
-            if (mMediaPlayerGlue.isPlaying()) {
-                playerState = Watch.PlayerState.PAUSE;
-            } else {
-                playerState = PLAY;
-            }
-
-        } else if (action.getId() == R.id.lb_control_fast_forward) {
-            playerState = Watch.PlayerState.FORWARD;
-
-        } else if (action.getId() == R.id.lb_control_fast_rewind) {
-            playerState = Watch.PlayerState.REWIND;
-        }
-
-
-        if (playerState == null || targetId == 0) return;
-
-        Log.d(TAG, "syncMe: sourceId " + sourceId + "   targetId  " + targetId);
-
-        mediaChatServiceStub.player(Watch.MediaChat.newBuilder()
-                        .setSourceId(sourceId)
-                        .setTargetId(targetId)
-                        .setPlayerMeta(Watch.PlayerMeta.newBuilder()
-                                .setPlayerState(playerState)
-                                .setTitle(mMediaPlayerGlue.getTitle().toString())
-                                .setSubtitle(mMediaPlayerGlue.getSubtitle().toString())
-                                .setUrl(currentDataSource)
-                                .setCurrentPosition(mMediaPlayerGlue.getCurrentPosition()).build()
-                        ).build(),
-                new StreamObserver<Watch.None>() {
+            public void applyRequestMetadata(RequestInfo requestInfo, Executor appExecutor, final MetadataApplier applier) {
+                appExecutor.execute(new Runnable() {
                     @Override
-                    public void onNext(Watch.None value) {
-                        Log.i(TAG, "onNext: player " + value);
-                    }
-
-                    @Override
-                    public void onError(Throwable t) {
-                        Log.e(TAG, "onError: player ", t.getCause());
-                    }
-
-                    @Override
-                    public void onCompleted() {
-                        Log.i(TAG, "onCompleted: player ");
+                    public void run() {
+                        try {
+                            Metadata headers = new Metadata();
+                            Metadata.Key<String> clientIdKey = Metadata.Key.of("x-chat-token", Metadata.ASCII_STRING_MARSHALLER);
+                            headers.put(clientIdKey, token);
+                            applier.apply(headers);
+                        } catch (Throwable ex) {
+                            applier.fail(Status.UNAUTHENTICATED.withCause(ex));
+                        }
                     }
                 });
-    }
-
-
-    private String getSystemProperty(String key) {
-        String value = null;
-        try {
-            value = (String) Class.forName("android.os.SystemProperties")
-                    .getMethod("get", String.class).invoke(null, key);
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-        return value;
-    }
-
-    private volatile Method set = null;
-
-    private void setSystemProperty(String prop, String value) {
-        try {
-            if (null == set) {
-                synchronized (KidsPasswordDialog.class) {
-                    if (null == set) {
-                        Class<?> cls = Class.forName("android.os.SystemProperties");
-                        set = cls.getDeclaredMethod("set", new Class<?>[]{String.class, String.class});
-                    }
-                }
             }
-            set.invoke(null, new Object[]{prop, value});
-        } catch (Throwable e) {
-            e.printStackTrace();
-        }
+
+            @Override
+            public void thisUsesUnstableApi() {
+            }
+        });
     }
 
-    private void showPasswordPopUp() {
-        KidsPasswordDialog dialogFragment = new KidsPasswordDialog(mediaChatServiceStub, sourceId);
-        FragmentTransaction ft = getActivity().getSupportFragmentManager().beginTransaction();
-        Fragment prev = getActivity().getSupportFragmentManager().findFragmentByTag("dialog");
-        if (prev != null) {
-            ft.remove(prev);
+    private void login() {
+        if (weWatchStub == null) {
+            initServer();
         }
-        ft.addToBackStack(null);
-        dialogFragment.show(ft, "dialog");
+        weWatchStub.login(Wewatch.LoginRequest.newBuilder().setName("tv").setPassword("cloudwalker").build(), new StreamObserver<Wewatch.LoginResponse>() {
+            @Override
+            public void onNext(Wewatch.LoginResponse value) {
+                Log.i(TAG, "onNext: login ");
+                token = value.getToken();
+            }
+
+            @Override
+            public void onError(Throwable t) {
+                Log.e(TAG, "onError: login ", t.getCause());
+            }
+
+            @Override
+            public void onCompleted() {
+                Log.i(TAG, "onCompleted: login ");
+            }
+        });
     }
 
+    private void logout() {
+        if (weWatchStub == null) {
+            return;
+        }
+        weWatchStub.logout(Wewatch.LogoutRequest.newBuilder().setToken(token).build(), new StreamObserver<Wewatch.LogoutResponse>() {
+            @Override
+            public void onNext(Wewatch.LogoutResponse value) {
+                Log.i(TAG, "onNext: logout");
+            }
+
+            @Override
+            public void onError(Throwable t) {
+                Log.e(TAG, "onError: logout", t.getCause());
+            }
+
+            @Override
+            public void onCompleted() {
+                Log.i(TAG, "onCompleted: logout ");
+                // very important !! the stream was not getting closed and the app got into bg, after trail n error, this is the soulution.
+                managedChannel.shutdownNow();
+            }
+        });
+    }
+
+    private void makeRoom() {
+        if (weWatchStub == null) {
+            return;
+        }
+        weWatchStub.makeRoom(Wewatch.MakeRoomRequest.newBuilder().setToken(token).build(), new StreamObserver<Wewatch.MakeRoomResponse>() {
+            @Override
+            public void onNext(Wewatch.MakeRoomResponse value) {
+                Log.i(TAG, "onNext: Make room ");
+                roomId = value.getRoomId();
+            }
+
+            @Override
+            public void onError(Throwable t) {
+                Log.e(TAG, "onError: ", t.getCause());
+            }
+
+            @Override
+            public void onCompleted() {
+                Log.i(TAG, "onCompleted: ");
+                getActivity().runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        Toast.makeText(getContext(), "Group Created with Id = " + roomId, Toast.LENGTH_SHORT).show();
+
+                    }
+                });
+                startStreaming();
+                isRoomMade = true;
+            }
+        });
+    }
+
+
+    private void synceMe(Action action) {
+        if (action.getId() == R.id.lb_control_play_pause) {
+            if (mMediaPlayerGlue.isPlaying()) {
+                streamRequestStreamObserver.onNext(Wewatch.StreamRequest.newBuilder().setPlayerState(Wewatch.PlayerStates.PLAY).build());
+            } else {
+                streamRequestStreamObserver.onNext(Wewatch.StreamRequest.newBuilder().setPlayerState(Wewatch.PlayerStates.PAUSE).build());
+            }
+        } else if (action.getId() == R.id.lb_control_fast_forward) {
+            streamRequestStreamObserver.onNext(Wewatch.StreamRequest.newBuilder().setPlayerState(Wewatch.PlayerStates.FORWARD).build());
+        } else if (action.getId() == R.id.lb_control_fast_rewind) {
+            streamRequestStreamObserver.onNext(Wewatch.StreamRequest.newBuilder().setPlayerState(Wewatch.PlayerStates.REWIND).build());
+        }
+        return;
+    }
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
         mMediaPlayerGlue = new PlaybackTransportControlGlueSample<MediaPlayerAdapter>(getActivity(), new MediaPlayerAdapter(getActivity())) {
             @Override
             public void onActionClicked(Action action) {
-                syncMe(action);
+                if (streamRequestStreamObserver != null) {
+                    synceMe(action);
+                }
+
                 if (action.getId() == R.id.lb_control_picture_in_picture) {
                     if (Build.VERSION.SDK_INT >= 24) {
                         getActivity().enterPictureInPictureMode();
                     }
                     return;
-                } else if (action.getId() == R.id.lb_control_more_actions) {
-                    showPasswordPopUp();
+                } else if (action.getId() == 7777) {
+
+                    if(!isJointRoom){
+                        Toast.makeText(getActivity(), "You have already joined a room with Id "+roomId, Toast.LENGTH_SHORT).show();
+                        return;
+                    }else if(!isRoomMade){
+                        makeRoom();
+                        action.setIcon(getResources().getDrawable(R.drawable.broadcastblack));
+                        action.setLabel1(String.valueOf(roomId));
+                        mMediaPlayerGlue.getControlsRow().getPrimaryActionsAdapter().notifyItemRangeChanged(3,1);
+                        return;
+                    }else {
+                        Toast.makeText(getActivity(), "You have already made a room with Id "+roomId, Toast.LENGTH_SHORT).show();
+                        return;
+                    }
+                } else if (action.getId() == 8888) {
+                    if(isRoomMade){
+                        Toast.makeText(getActivity(), "You have already made a room with id "+roomId+ " .Please inform others to join your room.", Toast.LENGTH_SHORT).show();
+                        return;
+                    }else if(!isJointRoom) {
+                        action.setIcon(getResources().getDrawable(R.drawable.add_in_room_black));
+                        showDialogPopUp();
+                        return;
+                    }
                 }
                 super.onActionClicked(action);
             }
         };
 
-        // create a media session inside of a fragment, and app developer can determine if connect
-        // this media session to glue or not
-        // as requested in b/64935838
         mMediaSessionCompat = new MediaSessionCompat(getActivity(), MEDIA_SESSION_COMPAT_TOKEN);
         mMediaPlayerGlue.connectToMediaSession(mMediaSessionCompat);
 
@@ -424,22 +252,19 @@ public class SampleVideoSupportFragment extends androidx.leanback.app.VideoSuppo
                 if (!mSecondCompleted) {
                     mSecondCompleted = true;
 
-
-                    if(!isTV){
+                    if (!isTV) {
 
                         mMediaPlayerGlue.setSubtitle("Dummy Video SubTitle");
                         mMediaPlayerGlue.setTitle("Bunny Honey.");
                         currentDataSource = "http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4";
 
-                    }else {
+                    } else {
                         mMediaPlayerGlue.setSubtitle("Leanback artist Changed!");
                         mMediaPlayerGlue.setTitle("Leanback team at work");
                         currentDataSource = "https://storage.googleapis.com/android-tv/Sample videos/April Fool's 2013/Explore Treasure Mode with Google Maps.mp4";
                     }
 
-
                     mMediaPlayerGlue.getPlayerAdapter().setDataSource(Uri.parse(currentDataSource));
-//                    loadSeekData(mMediaPlayerGlue);
                     playWhenReady(mMediaPlayerGlue);
                 } else {
                     mMediaPlayerGlue.removePlayerCallback(this);
@@ -449,71 +274,135 @@ public class SampleVideoSupportFragment extends androidx.leanback.app.VideoSuppo
         });
 
 
-        if(!isTV){
-
+        if (!isTV) {
             mMediaPlayerGlue.setSubtitle("Leanback artist Changed!");
             mMediaPlayerGlue.setTitle("Leanback team at work");
             currentDataSource = "https://storage.googleapis.com/android-tv/Sample videos/April Fool's 2013/Explore Treasure Mode with Google Maps.mp4";
-
-        }else {
+        } else {
 
             mMediaPlayerGlue.setSubtitle("Dummy Video SubTitle");
             mMediaPlayerGlue.setTitle("Bunny Honey.");
             currentDataSource = "http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4";
         }
 
-
         mMediaPlayerGlue.getPlayerAdapter().setDataSource(Uri.parse(currentDataSource));
         mMediaPlayerGlue.setSeekEnabled(false);
-
-//        loadSeekData(mMediaPlayerGlue);
-
-
         playWhenReady(mMediaPlayerGlue);
+
+        login();
     }
+
+    private void showDialogPopUp() {
+        KidsPasswordDialog dialogFragment = new KidsPasswordDialog(weWatchStub, token);
+        dialogFragment.setTargetFragment(this, DIALOG_REQUEST_CODE);
+        FragmentTransaction ft = getActivity().getSupportFragmentManager().beginTransaction();
+        Fragment prev = getActivity().getSupportFragmentManager().findFragmentByTag(DIALOG_TAG);
+        if (prev != null) {
+            ft.remove(prev);
+        }
+        ft.addToBackStack(null);
+        dialogFragment.show(ft, DIALOG_TAG);
+    }
+
 
     @Override
-    public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
-        super.onViewCreated(view, savedInstanceState);
-        setServer();
+    public void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == DIALOG_REQUEST_CODE) {
+            if (resultCode == Activity.RESULT_OK) {
+                if (data.getExtras().containsKey("roomId")) {
+                    roomId = data.getExtras().getInt("roomId");
+                    Log.i(TAG, "addedToRoom: !!! ");
+                    ((PlaybackControlsRow.MoreActions)mMediaPlayerGlue.getControlsRow().getPrimaryActionsAdapter().get(4))
+                            .setIcon(getResources().getDrawable(R.drawable.add_in_room_black));
+                    mMediaPlayerGlue.getControlsRow().getPrimaryActionsAdapter().notifyItemRangeChanged(4,1);
+                    isJointRoom = true;
+                    startStreaming();
+                }
+            }
+        }
     }
+
+    private void startStreaming(){
+        streamRequestStreamObserver = weWatchStub.stream(new StreamObserver<Wewatch.StreamResponse>() {
+            @Override
+            public void onNext(Wewatch.StreamResponse value) {
+                if(value.getClientMessage() != null){
+                    if(value.getClientMessage().getPlayerState() == Wewatch.PlayerStates.PLAY){
+                        getActivity().runOnUiThread(new Runnable() {
+                            @Override
+                            public void run() {
+                                mMediaPlayerGlue.play();
+                            }
+                        });
+
+                    }else if(value.getClientMessage().getPlayerState() == Wewatch.PlayerStates.PAUSE){
+                        getActivity().runOnUiThread(new Runnable() {
+                            @Override
+                            public void run() {
+                                mMediaPlayerGlue.pause();
+                            }
+                        });
+
+                    }else if(value.getClientMessage().getPlayerState() == Wewatch.PlayerStates.FORWARD){
+                        getActivity().runOnUiThread(new Runnable() {
+                            @Override
+                            public void run() {
+                                mMediaPlayerGlue.fastForward();
+                            }
+                        });
+
+                    }else if(value.getClientMessage().getPlayerState() == Wewatch.PlayerStates.REWIND){
+                        getActivity().runOnUiThread(new Runnable() {
+                            @Override
+                            public void run() {
+                                mMediaPlayerGlue.rewind();
+                            }
+                        });
+
+                    }else {
+                        Log.i(TAG, "onNext: " + value.toString());
+                    }
+                }
+            }
+
+            @Override
+            public void onError(Throwable t) {
+                Log.e(TAG, "onError: stream..", t);
+            }
+
+            @Override
+            public void onCompleted() {
+                Log.i(TAG, "onCompleted: completed..");
+            }
+        });
+    }
+
 
     @Override
     public void onPause() {
         if (mMediaPlayerGlue != null) {
             mMediaPlayerGlue.pause();
         }
-        Log.d(TAG, "onPause: ");
         super.onPause();
     }
-
 
     @Override
     public void onStart() {
         super.onStart();
+        Log.i(TAG, "onStart: ");
+
         ((VideoSupportActivity) getActivity()).registerPictureInPictureListener(this);
     }
 
     @Override
     public void onStop() {
         Log.d(TAG, "onStop: ");
-        managedChannel.shutdownNow();
+
+
         ((VideoSupportActivity) getActivity()).unregisterPictureInPictureListener(this);
         super.onStop();
     }
-
-    @Override
-    public void onDestroyView() {
-        super.onDestroyView();
-        Log.d(TAG, "onDestroyView: ");
-    }
-
-    @Override
-    public void onDetach() {
-        super.onDetach();
-        Log.d(TAG, "onDetach: ");
-    }
-
 
     @Override
     public void onPictureInPictureModeChanged(boolean isInPictureInPictureMode) {
@@ -528,12 +417,15 @@ public class SampleVideoSupportFragment extends androidx.leanback.app.VideoSuppo
 
     @Override
     public void onDestroy() {
-        Log.d(TAG, "onDestroy: ");
-        super.onDestroy();
+        if(streamRequestStreamObserver != null){
+            streamRequestStreamObserver.onCompleted();
+        }
+        logout();
         mMediaPlayerGlue.disconnectToMediaSession();
+        super.onDestroy();
     }
 
-    void switchAnotherGlue() {
+    private void switchAnotherGlue() {
         mMediaPlayerGlue = new PlaybackTransportControlGlueSample<MediaPlayerAdapter>(getActivity(), new MediaPlayerAdapter(getActivity()));
 
         // If the glue is switched, re-register the media session
@@ -545,7 +437,7 @@ public class SampleVideoSupportFragment extends androidx.leanback.app.VideoSuppo
         currentDataSource = "http://techslides.com/demos/sample-videos/small.mp4";
         mMediaPlayerGlue.getPlayerAdapter().setDataSource(Uri.parse(currentDataSource));
         mMediaPlayerGlue.setHost(mHost);
-        loadSeekData(mMediaPlayerGlue);
         playWhenReady(mMediaPlayerGlue);
     }
+
 }

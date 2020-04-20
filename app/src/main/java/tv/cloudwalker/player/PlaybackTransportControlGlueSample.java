@@ -57,7 +57,8 @@ class PlaybackTransportControlGlueSample<T extends PlayerAdapter> extends androi
     private PlaybackControlsRow.FastForwardAction mFastForwardAction;
     private PlaybackControlsRow.RewindAction mRewindAction;
 
-    private PlaybackControlsRow.MoreActions mMoreActions;
+    private PlaybackControlsRow.MoreActions hostPlayerAction;
+    private PlaybackControlsRow.MoreActions addInGroupAction;
 
 
 //    private PlaybackControlsRow.PictureInPictureAction mPipAction;
@@ -78,8 +79,13 @@ class PlaybackTransportControlGlueSample<T extends PlayerAdapter> extends androi
 //        mThumbsDownAction.setIndex(PlaybackControlsRow.ThumbsDownAction.INDEX_OUTLINE);
 //        mRepeatAction = new PlaybackControlsRow.RepeatAction(context);
 
-        mMoreActions  = new PlaybackControlsRow.MoreActions(context);
+        hostPlayerAction  = new PlaybackControlsRow.MoreActions(context);
+        hostPlayerAction.setIcon(getContext().getResources().getDrawable(R.drawable.broadcast));
+        hostPlayerAction.setId(7777);
 
+        addInGroupAction  = new PlaybackControlsRow.MoreActions(context);
+        addInGroupAction.setIcon(getContext().getResources().getDrawable(R.drawable.add_in_room));
+        addInGroupAction.setId(8888);
 
         mFastForwardAction = new PlaybackControlsRow.FastForwardAction(context);
         mRewindAction = new PlaybackControlsRow.RewindAction(context);
@@ -103,7 +109,8 @@ class PlaybackTransportControlGlueSample<T extends PlayerAdapter> extends androi
         adapter.add(mFastForwardAction);
 //        adapter.add(mRepeatAction);
 //        adapter.add(mClosedCaptioningAction);
-        adapter.add(mMoreActions);
+        adapter.add(hostPlayerAction);
+        adapter.add(addInGroupAction);
     }
 
     @Override
