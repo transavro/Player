@@ -20,19 +20,22 @@ import androidx.leanback.media.PlaybackGlue;
 import androidx.leanback.widget.Action;
 import androidx.leanback.widget.PlaybackControlsRow;
 
+import com.google.protobuf.InvalidProtocolBufferException;
+
 import java.io.BufferedReader;
 import java.io.FileReader;
 import java.io.IOException;
-import java.util.concurrent.Executor;
+import java.util.Random;
 
-import cloudwalker.WeWatchGrpc;
 import cloudwalker.Wewatch;
-import io.grpc.CallCredentials;
-import io.grpc.ManagedChannel;
-import io.grpc.ManagedChannelBuilder;
-import io.grpc.Metadata;
-import io.grpc.Status;
-import io.grpc.stub.StreamObserver;
+import io.nats.client.Connection;
+import io.nats.client.ConnectionListener;
+import io.nats.client.Dispatcher;
+import io.nats.client.Message;
+import io.nats.client.MessageHandler;
+import io.nats.client.Nats;
+import io.nats.client.Options;
+
 
 public class CloudwalkerPlayerFragment extends VideoSupportFragment {
     private static final String TAG = "NayanMakasare";
@@ -48,53 +51,98 @@ public class CloudwalkerPlayerFragment extends VideoSupportFragment {
     private VideoSupportFragmentGlueHost mHost = new VideoSupportFragmentGlueHost(CloudwalkerPlayerFragment.this);
     private String currentUrl = "";
 
-    //GRPC VARIABLES
-    private ManagedChannel managedChannel;
-    private String token = "";
-    private int roomId = 0;
+    //NATS VARIABLES
+    private String roomId = "";
     private boolean isRoomMade = false;
     private boolean isJoinRoom = false;
-    private StreamObserver<Wewatch.StreamRequest> streamObserver;
+    private Connection nc = null;
+    private boolean ignoreSelf = false;
+    private Options options = new Options.Builder().server("nats://192.168.0.106:4222")
+            .connectionListener(new ConnectionListener() {
+                @Override
+                public void connectionEvent(Connection conn, Events type) {
+                    if (nc == null) {
+                        nc = conn;
+                    }
+                    Log.i(TAG, "connectionEvent: " + conn.toString() + "  " + type.toString());
+                }
+            }).build();
 
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        try {
+            connectToMessagingServer();
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
         mMediaPlayerGlue = new PlaybackTransportControlGlueSample<MediaPlayerAdapter>(getActivity(), new MediaPlayerAdapter(getActivity())) {
 
             @Override
             public void onActionClicked(Action action) {
                 if (action.getId() == 7777) {
-                    if(isRoomMade == false && isJoinRoom == false){
+                    if (!isRoomMade && !isJoinRoom) {
                         makeRoom(action);
-                    }else if(isJoinRoom == true){
-                        Toast.makeText(getActivity(), "Already Join a room with id = "+roomId, Toast.LENGTH_SHORT).show();
-                    }else if(isRoomMade == true){
-                        Toast.makeText(getActivity(), "Already Made a room with id = "+roomId+" , Please inform others to join room", Toast.LENGTH_SHORT).show();
+                    } else if (isJoinRoom) {
+                        Toast.makeText(getActivity(), "Already Join a room with id = " + roomId, Toast.LENGTH_SHORT).show();
+                    } else {
+                        Toast.makeText(getActivity(), "Already Made a room with id = " + roomId + " , Please inform others to join room", Toast.LENGTH_SHORT).show();
                     }
                 } else if (action.getId() == 8888) {
-                    if(isRoomMade == true){
-                        Toast.makeText(getActivity(), "Already Made a room with id = "+roomId+" , Please inform others to join room", Toast.LENGTH_SHORT).show();
-                    }else if(isJoinRoom == true){
-                        Toast.makeText(getActivity(), "Already Join a room with id = "+roomId, Toast.LENGTH_SHORT).show();
-                    }else {
+                    if (isRoomMade) {
+                        Toast.makeText(getActivity(), "Already Made a room with id = " + roomId + " , Please inform others to join room", Toast.LENGTH_SHORT).show();
+                    } else if (isJoinRoom) {
+                        Toast.makeText(getActivity(), "Already Join a room with id = " + roomId, Toast.LENGTH_SHORT).show();
+                    } else {
                         showDialogPopUp();
                     }
                 } else {
-                    streamWriter(action);
+                    if (nc != null && !roomId.isEmpty()) {
+                        Log.i(TAG, "onActionClicked: PUBLISHING... " + roomId + "  " + ignoreSelf);
+                        streamWriter(action);
+                    }
                 }
                 super.onActionClicked(action);
             }
         };
-
-
-        initServer();
-
         MediaSessionCompat mMediaSessionCompat = new MediaSessionCompat(getActivity(), MEDIA_SESSION_COMPAT_TOKEN);
         mMediaPlayerGlue.connectToMediaSession(mMediaSessionCompat);
         mMediaPlayerGlue.setHost(mHost);
         mMediaPlayerGlue.setMode(PlaybackControlsRow.RepeatAction.INDEX_NONE);
         selectSource();
+    }
+
+    private void streamWriter(Action action) {
+        Wewatch.PlayerStates playerStates = null;
+        if (action.getId() == R.id.lb_control_play_pause) {
+            if (mMediaPlayerGlue.isPlaying()) {
+                playerStates = Wewatch.PlayerStates.PAUSE;
+            } else {
+                playerStates = Wewatch.PlayerStates.PLAY;
+            }
+        } else if (action.getId() == R.id.lb_control_fast_rewind) {
+            playerStates = Wewatch.PlayerStates.REWIND;
+        } else if (action.getId() == R.id.lb_control_fast_forward) {
+            playerStates = Wewatch.PlayerStates.FORWARD;
+        }
+
+        if (playerStates == null) {
+            return;
+        }
+        ignoreSelf = true;
+        nc.publish(roomId, Wewatch.Messaging.newBuilder()
+                .setCurrentPosition(mMediaPlayerGlue.getCurrentPosition())
+                .setTitle(mMediaPlayerGlue.getTitle().toString())
+                .setSubtitle(mMediaPlayerGlue.getSubtitle().toString())
+                .setPlayerState(playerStates)
+                .setTimeStamp(System.currentTimeMillis())
+                .setUrl(currentUrl).build().toByteArray());
+        return;
+    }
+
+    private void connectToMessagingServer() throws InterruptedException {
+        Nats.connectAsynchronously(options, true);
     }
 
     private void playWhenReady() {
@@ -168,7 +216,7 @@ public class CloudwalkerPlayerFragment extends VideoSupportFragment {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode == DIALOG_REQUEST_CODE) {
             if (resultCode == Activity.RESULT_OK) {
-                roomId = data.getIntExtra("roomId", 0);
+                roomId = data.getStringExtra("roomId");
                 joinRoom();
             }
         }
@@ -185,378 +233,199 @@ public class CloudwalkerPlayerFragment extends VideoSupportFragment {
     @Override
     public void onStop() {
         mMediaPlayerGlue.disconnectToMediaSession();
-        if (streamObserver != null) {
-            streamObserver.onCompleted();
-        }
-        if (!token.isEmpty()) {
-            logout();
+        try {
+            nc.close();
+        } catch (InterruptedException e) {
+            e.printStackTrace();
         }
         super.onStop();
     }
 
-
-    //server methods
-    private void initServer() {
-        managedChannel = ManagedChannelBuilder.forAddress("3.6.231.212", 5000).usePlaintext().build();
-//        managedChannel = ManagedChannelBuilder.forTarget("dev.cloudwalker.tv:80").usePlaintext().build();
-        login();
-    }
-
-    private void login() {
-
-        WeWatchGrpc.WeWatchStub weWatchStub = WeWatchGrpc.newStub(managedChannel);
-        weWatchStub.login(Wewatch.LoginRequest.newBuilder()
-                .setName("nayan box")
-                .setPassword("cloudwalker").build(), new StreamObserver<Wewatch.LoginResponse>() {
-            @Override
-            public void onNext(Wewatch.LoginResponse value) {
-                Log.i(TAG, "onNext: login ");
-                token = value.getToken();
-            }
-
-            @Override
-            public void onError(Throwable t) {
-                Log.e(TAG, "onError: login ", t);
-            }
-
-            @Override
-            public void onCompleted() {
-                Log.i(TAG, "onCompleted: login");
-            }
-        });
-    }
-
-    private void logout() {
-        WeWatchGrpc.WeWatchStub weWatchStub = WeWatchGrpc.newStub(managedChannel);
-        weWatchStub.logout(Wewatch.LogoutRequest.newBuilder().setToken(token).build(), new StreamObserver<Wewatch.LogoutResponse>() {
-            @Override
-            public void onNext(Wewatch.LogoutResponse value) {
-                Log.i(TAG, "onNext: logout ");
-            }
-
-            @Override
-            public void onError(Throwable t) {
-                Log.e(TAG, "onError: logout", t);
-            }
-
-            @Override
-            public void onCompleted() {
-                Log.i(TAG, "onCompleted: logout ");
-                // important
-                managedChannel.shutdownNow();
-            }
-        });
-    }
-
     private void makeRoom(final Action action) {
-
-        if (token.isEmpty()) {
-            return;
-        }
-
-        WeWatchGrpc.WeWatchStub weWatchStub = WeWatchGrpc.newStub(managedChannel);
-
-        weWatchStub.makeRoom(Wewatch.MakeRoomRequest.newBuilder()
-                .setTkn(token)
-                .build(), new StreamObserver<Wewatch.MakeRoomResponse>() {
-            @Override
-            public void onNext(Wewatch.MakeRoomResponse value) {
-                Log.i(TAG, "onNext: makeRoom " + value);
-                roomId = value.getRoomId();
-                showToast("Room id " + roomId);
-            }
-
-            @Override
-            public void onError(Throwable t) {
-                Log.e(TAG, "onError: makeRoom ", t);
-            }
-
-            @Override
-            public void onCompleted() {
-                Log.i(TAG, "onCompleted: ");
-                getActivity().runOnUiThread(new Runnable() {
-                    @Override
-                    public void run() {
-                        action.setIcon(getResources().getDrawable(R.drawable.broadcastblack));
-                        action.setLabel1(String.valueOf(roomId));
-                        mMediaPlayerGlue.getControlsRow().getPrimaryActionsAdapter().notifyItemRangeChanged(3 , 1);
-                    }
-                });
-                isRoomMade = true;
-                streamReader();
-            }
-        });
-
+        Random random = new Random();
+        roomId = String.format("%04d", random.nextInt(10000));
+        showToast("RoomID is " + roomId);
+        action.setIcon(getResources().getDrawable(R.drawable.broadcastblack));
+        Log.i(TAG, "makeRoom: " + roomId);
+        action.setLabel1(String.valueOf(roomId));
+        mMediaPlayerGlue.getControlsRow().getPrimaryActionsAdapter().notifyItemRangeChanged(3, 1);
+        isRoomMade = true;
+        startReading();
     }
 
     private void joinRoom() {
-
-        if (token.isEmpty() || roomId == 0) {
-            return;
-        }
-
-        WeWatchGrpc.WeWatchStub weWatchStub = WeWatchGrpc.newStub(managedChannel);
-        weWatchStub.joinRoom(Wewatch.JoinRoomRequest.newBuilder().setToken(token).setRoomId(roomId).build(), new StreamObserver<Wewatch.JoinRoomResponse>() {
-            @Override
-            public void onNext(Wewatch.JoinRoomResponse value) {
-                Log.i(TAG, "onNext: joinRoom " + value.toString());
-                showToast(value.getJointState().name());
-            }
-
-            @Override
-            public void onError(Throwable t) {
-                Log.e(TAG, "onError: join room ", t);
-            }
-
-            @Override
-            public void onCompleted() {
-                Log.i(TAG, "onCompleted: join room ");
-                getActivity().runOnUiThread(new Runnable() {
-                    @Override
-                    public void run() {
-                        ((PlaybackControlsRow.MoreActions)mMediaPlayerGlue.getControlsRow().getPrimaryActionsAdapter().get(4)).setIcon(getResources().getDrawable(R.drawable.add_in_room_black));
-                        mMediaPlayerGlue.getControlsRow().getPrimaryActionsAdapter().notifyItemRangeChanged(4,1);
-                        isJoinRoom = true;
-                    }
-                });
-                streamReader();
-            }
-        });
+        ((PlaybackControlsRow.MoreActions) mMediaPlayerGlue.getControlsRow().getPrimaryActionsAdapter().get(4)).setIcon(getResources().getDrawable(R.drawable.add_in_room_black));
+        mMediaPlayerGlue.getControlsRow().getPrimaryActionsAdapter().notifyItemRangeChanged(4, 1);
+        isJoinRoom = true;
+        Log.i(TAG, "joinRoom: ");
+        startReading();
     }
 
-    private void streamReader() {
-
-        if (token.isEmpty()) {
-            return;
-        }
-
-        WeWatchGrpc.WeWatchStub streamStub = WeWatchGrpc.newStub(managedChannel).withCallCredentials(new CallCredentials() {
+    private void startReading() {
+        Dispatcher d = nc.createDispatcher(new MessageHandler() {
             @Override
-            public void applyRequestMetadata(RequestInfo requestInfo, Executor appExecutor, final MetadataApplier applier) {
-                appExecutor.execute(new Runnable() {
-                    @Override
-                    public void run() {
-                        try {
-                            Metadata headers = new Metadata();
-                            Metadata.Key<String> clientIdKey = Metadata.Key.of("x-chat-token", Metadata.ASCII_STRING_MARSHALLER);
-                            headers.put(clientIdKey, token);
-                            applier.apply(headers);
-                        } catch (Throwable ex) {
-                            applier.fail(Status.UNAUTHENTICATED.withCause(ex));
+            public void onMessage(Message msg) throws InterruptedException {
+                if (ignoreSelf) {
+                    ignoreSelf = false;
+                    //noop
+                } else {
+                    getActivity().runOnUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            try {
+                                syncStream(Wewatch.Messaging.parseFrom(msg.getData()));
+                            } catch (InvalidProtocolBufferException e) {
+                                e.printStackTrace();
+                            }
                         }
-                    }
-                });
-            }
-
-            @Override
-            public void thisUsesUnstableApi() {
-            }
-        });
-
-        streamObserver = streamStub.stream(new StreamObserver<Wewatch.StreamResponse>() {
-            @Override
-            public void onNext(final Wewatch.StreamResponse value) {
-
-                getActivity().runOnUiThread(new Runnable() {
-                    @Override
-                    public void run() {
-                        syncStream(value);
-                    }
-                });
-
-            }
-
-            @Override
-            public void onError(Throwable t) {
-                Log.d(TAG, "onError: KNOWN BUG " + t.getMessage());
-            }
-
-            @Override
-            public void onCompleted() {
-                Log.i(TAG, "onCompleted: stream ");
-            }
-        });
-    }
-
-
-    private void syncStream(final Wewatch.StreamResponse value) {
-
-        if (value.getClientMessage() != null) {
-
-            boolean isSourceDiff = false;
-
-            if (value.getClientMessage().getRoomMeta().getTitle() != mMediaPlayerGlue.getTitle()) {
-                mMediaPlayerGlue.setTitle(value.getClientMessage().getRoomMeta().getTitle());
-            }
-            if (value.getClientMessage().getRoomMeta().getSubtitle() != mMediaPlayerGlue.getSubtitle()) {
-                mMediaPlayerGlue.setSubtitle(value.getClientMessage().getRoomMeta().getSubtitle());
-            }
-
-            if(!currentUrl.equals(value.getClientMessage().getRoomMeta().getUrl())){
-                // diffrent content.
-                isSourceDiff = true;
-                currentUrl = value.getClientMessage().getRoomMeta().getUrl();
-                Log.i(TAG, "syncStream: NEW URL ="+currentUrl);
-
-            }else {
-                // adding offset of 1 sec == 1000 millisec
-                mMediaPlayerGlue.seekTo((value.getClientMessage().getRoomMeta().getCurrentPosition() + 1500));
-            }
-
-
-            switch (value.getClientMessage().getRoomMeta().getPlayerState()) {
-                case SYNC: {
-
+                    });
                 }
-                break;
-                case PLAY: {
-                    if(isSourceDiff){
+            }
+        });
 
-                        mMediaPlayerGlue.getPlayerAdapter().setDataSource(Uri.parse(currentUrl));
-                        mMediaPlayerGlue.setSeekEnabled(false);
-                        if (mMediaPlayerGlue.isPrepared()) {
-                            mMediaPlayerGlue.seekTo((value.getClientMessage().getRoomMeta().getCurrentPosition()  + 1500 ));
-                            mMediaPlayerGlue.play();
-                        } else {
-                            mMediaPlayerGlue.addPlayerCallback(new PlaybackGlue.PlayerCallback() {
-                                @Override
-                                public void onPreparedStateChanged(PlaybackGlue glue) {
-                                    if (glue.isPrepared()) {
-                                        glue.removePlayerCallback(this);
-                                        mMediaPlayerGlue.seekTo((value.getClientMessage().getRoomMeta().getCurrentPosition() + 1500));
-                                        glue.play();
-                                    }
-                                }
-                            });
-                        }
+        d.subscribe(roomId);
+    }
 
-                    }else {
+
+    private void syncStream(final Wewatch.Messaging value) {
+
+        boolean isSourceDiff = false;
+        if (value.getTitle() != mMediaPlayerGlue.getTitle()) {
+            mMediaPlayerGlue.setTitle(value.getTitle());
+        }
+        if (value.getSubtitle() != mMediaPlayerGlue.getSubtitle()) {
+            mMediaPlayerGlue.setSubtitle(value.getSubtitle());
+        }
+        if (!currentUrl.equals(value.getUrl())) {
+            isSourceDiff = true;
+            currentUrl = value.getUrl();
+        } else {
+
+            mMediaPlayerGlue.seekTo((value.getCurrentPosition()) + (System.currentTimeMillis() - value.getTimeStamp()));
+        }
+        switch (value.getPlayerState()) {
+            case PLAY: {
+                if (isSourceDiff) {
+                    mMediaPlayerGlue.getPlayerAdapter().setDataSource(Uri.parse(currentUrl));
+                    mMediaPlayerGlue.setSeekEnabled(false);
+                    if (mMediaPlayerGlue.isPrepared()) {
+                        mMediaPlayerGlue.seekTo((value.getCurrentPosition() + (System.currentTimeMillis() - value.getTimeStamp())));
                         mMediaPlayerGlue.play();
-                    }
-                }
-                break;
-                case PAUSE: {
-                    if(isSourceDiff){
-
-                        mMediaPlayerGlue.getPlayerAdapter().setDataSource(Uri.parse(currentUrl));
-                        mMediaPlayerGlue.setSeekEnabled(false);
-                        if (mMediaPlayerGlue.isPrepared()) {
-                            mMediaPlayerGlue.seekTo((value.getClientMessage().getRoomMeta().getCurrentPosition() + 1500 ));
-                            mMediaPlayerGlue.pause();
-                        } else {
-                            mMediaPlayerGlue.addPlayerCallback(new PlaybackGlue.PlayerCallback() {
-                                @Override
-                                public void onPreparedStateChanged(PlaybackGlue glue) {
-                                    if (glue.isPrepared()) {
-                                        glue.removePlayerCallback(this);
-                                        mMediaPlayerGlue.seekTo((value.getClientMessage().getRoomMeta().getCurrentPosition() + 1500));
-                                        glue.pause();
-                                    }
+                    } else {
+                        mMediaPlayerGlue.addPlayerCallback(new PlaybackGlue.PlayerCallback() {
+                            @Override
+                            public void onPreparedStateChanged(PlaybackGlue glue) {
+                                if (glue.isPrepared()) {
+                                    glue.removePlayerCallback(this);
+                                    mMediaPlayerGlue.seekTo((value.getCurrentPosition() + (System.currentTimeMillis() - value.getTimeStamp())));
+                                    glue.play();
                                 }
-                            });
-                        }
+                            }
+                        });
+                    }
 
-                    }else {
+                } else {
+                    mMediaPlayerGlue.play();
+                }
+            }
+            break;
+            case PAUSE: {
+                if (isSourceDiff) {
+
+                    mMediaPlayerGlue.getPlayerAdapter().setDataSource(Uri.parse(currentUrl));
+                    mMediaPlayerGlue.setSeekEnabled(false);
+                    if (mMediaPlayerGlue.isPrepared()) {
+                        mMediaPlayerGlue.seekTo((value.getCurrentPosition() + (System.currentTimeMillis() - value.getTimeStamp())));
                         mMediaPlayerGlue.pause();
-                    }
-                }
-                break;
-                case REWIND: {
-
-                    if(isSourceDiff){
-
-                        mMediaPlayerGlue.getPlayerAdapter().setDataSource(Uri.parse(currentUrl));
-                        mMediaPlayerGlue.setSeekEnabled(false);
-                        if (mMediaPlayerGlue.isPrepared()) {
-                            mMediaPlayerGlue.seekTo((value.getClientMessage().getRoomMeta().getCurrentPosition() + 1500));
-                            mMediaPlayerGlue.rewind();
-
-                        } else {
-                            mMediaPlayerGlue.addPlayerCallback(new PlaybackGlue.PlayerCallback() {
-                                @Override
-                                public void onPreparedStateChanged(PlaybackGlue glue) {
-                                    if (glue.isPrepared()) {
-                                        glue.removePlayerCallback(this);
-                                        mMediaPlayerGlue.seekTo((value.getClientMessage().getRoomMeta().getCurrentPosition() + 1500));
-                                        mMediaPlayerGlue.rewind();
-                                    }
+                    } else {
+                        mMediaPlayerGlue.addPlayerCallback(new PlaybackGlue.PlayerCallback() {
+                            @Override
+                            public void onPreparedStateChanged(PlaybackGlue glue) {
+                                if (glue.isPrepared()) {
+                                    glue.removePlayerCallback(this);
+                                    mMediaPlayerGlue.seekTo((value.getCurrentPosition() + (System.currentTimeMillis() - value.getTimeStamp())));
+                                    glue.pause();
                                 }
-                            });
-                        }
+                            }
+                        });
+                    }
 
-                    }else {
+                } else {
+                    mMediaPlayerGlue.pause();
+                }
+            }
+            break;
+            case REWIND: {
+
+                if (isSourceDiff) {
+
+                    mMediaPlayerGlue.getPlayerAdapter().setDataSource(Uri.parse(currentUrl));
+                    mMediaPlayerGlue.setSeekEnabled(false);
+                    if (mMediaPlayerGlue.isPrepared()) {
+                        mMediaPlayerGlue.seekTo((value.getCurrentPosition() + (System.currentTimeMillis() - value.getTimeStamp())));
                         mMediaPlayerGlue.rewind();
-                    }
-                }
-                break;
-                case FORWARD: {
 
-                    if(isSourceDiff){
-
-                        mMediaPlayerGlue.getPlayerAdapter().setDataSource(Uri.parse(currentUrl));
-                        mMediaPlayerGlue.setSeekEnabled(false);
-                        if (mMediaPlayerGlue.isPrepared()) {
-                            mMediaPlayerGlue.seekTo((value.getClientMessage().getRoomMeta().getCurrentPosition() + 1500));
-                            mMediaPlayerGlue.fastForward();
-
-                        } else {
-                            mMediaPlayerGlue.addPlayerCallback(new PlaybackGlue.PlayerCallback() {
-                                @Override
-                                public void onPreparedStateChanged(PlaybackGlue glue) {
-                                    if (glue.isPrepared()) {
-                                        glue.removePlayerCallback(this);
-                                        mMediaPlayerGlue.seekTo((value.getClientMessage().getRoomMeta().getCurrentPosition() + 1500));
-                                        mMediaPlayerGlue.fastForward();
-                                    }
+                    } else {
+                        mMediaPlayerGlue.addPlayerCallback(new PlaybackGlue.PlayerCallback() {
+                            @Override
+                            public void onPreparedStateChanged(PlaybackGlue glue) {
+                                if (glue.isPrepared()) {
+                                    glue.removePlayerCallback(this);
+                                    mMediaPlayerGlue.seekTo((value.getCurrentPosition() + (System.currentTimeMillis() - value.getTimeStamp())));
+                                    mMediaPlayerGlue.rewind();
                                 }
-                            });
-                        }
-
-                    }else {
-                        mMediaPlayerGlue.fastForward();
+                            }
+                        });
                     }
-                }
-                break;
-                case BUFFER: {
 
+                } else {
+                    mMediaPlayerGlue.rewind();
                 }
-                break;
             }
+            break;
+            case FORWARD: {
+
+                if (isSourceDiff) {
+
+                    mMediaPlayerGlue.getPlayerAdapter().setDataSource(Uri.parse(currentUrl));
+                    mMediaPlayerGlue.setSeekEnabled(false);
+                    if (mMediaPlayerGlue.isPrepared()) {
+                        mMediaPlayerGlue.seekTo((value.getCurrentPosition() + (System.currentTimeMillis() - value.getTimeStamp())));
+                        mMediaPlayerGlue.fastForward();
+
+                    } else {
+                        mMediaPlayerGlue.addPlayerCallback(new PlaybackGlue.PlayerCallback() {
+                            @Override
+                            public void onPreparedStateChanged(PlaybackGlue glue) {
+                                if (glue.isPrepared()) {
+                                    glue.removePlayerCallback(this);
+                                    mMediaPlayerGlue.seekTo((value.getCurrentPosition() + (System.currentTimeMillis() - value.getTimeStamp())));
+                                    mMediaPlayerGlue.fastForward();
+                                }
+                            }
+                        });
+                    }
+
+                } else {
+                    mMediaPlayerGlue.fastForward();
+                }
+            }
+            break;
+            case SYNC: {
+
+                if (nc == null) {
+                    return;
+                }
+
+            }
+            break;
+            case BUFFER: {
+
+            }
+            break;
         }
     }
 
-    private void streamWriter(Action action) {
-
-        if (streamObserver == null) {
-            return;
-        }
-        Wewatch.PlayerStates playerStates = null;
-        if (action.getId() == R.id.lb_control_play_pause) {
-            if (mMediaPlayerGlue.isPlaying()) {
-                playerStates = Wewatch.PlayerStates.PAUSE;
-            } else {
-                playerStates = Wewatch.PlayerStates.PLAY;
-            }
-        } else if (action.getId() == R.id.lb_control_fast_rewind) {
-            playerStates = Wewatch.PlayerStates.REWIND;
-        } else if (action.getId() == R.id.lb_control_fast_forward) {
-            playerStates = Wewatch.PlayerStates.FORWARD;
-        }
-
-        if (playerStates == null) {
-            return;
-        }
-
-        streamObserver.onNext(Wewatch.StreamRequest.newBuilder()
-                .setRoomMeta(Wewatch.RoomMeta.newBuilder()
-                        .setTitle(mMediaPlayerGlue.getTitle().toString())
-                        .setSubtitle(mMediaPlayerGlue.getSubtitle().toString())
-                        .setUrl(currentUrl)
-                        .setCurrentPosition(mMediaPlayerGlue.getCurrentPosition())
-                        .setPlayerState(playerStates)
-                        .build())
-                .build());
-    }
 
     // utility methods
     private void showToast(final String message) {
@@ -577,6 +446,7 @@ public class CloudwalkerPlayerFragment extends VideoSupportFragment {
             return null;
         }
     }
+
     private String loadFileAsString(String filePath) throws java.io.IOException {
         StringBuffer fileData = new StringBuffer(1000);
         BufferedReader reader = new BufferedReader(new FileReader(filePath));

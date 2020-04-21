@@ -13,15 +13,10 @@ import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.fragment.app.DialogFragment;
-
-import cloudwalker.WeWatchGrpc;
-import cloudwalker.Wewatch;
-import io.grpc.stub.StreamObserver;
 
 public class KidsPasswordDialog extends DialogFragment implements View.OnClickListener {
     private static final String TAG = "KidsPasswordDialog";
@@ -162,7 +157,7 @@ public class KidsPasswordDialog extends DialogFragment implements View.OnClickLi
     public void onClick(final View view) {
         switch (view.getId()) {
             case R.id.passwordButton: {
-                Intent intent = new Intent().putExtra("roomId", Integer.parseInt(mergingCode()));
+                Intent intent = new Intent().putExtra("roomId", mergingCode());
                 getTargetFragment().onActivityResult(getTargetRequestCode(), Activity.RESULT_OK, intent);
                 KidsPasswordDialog.this.dismiss();
             }
