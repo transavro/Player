@@ -15,16 +15,20 @@ public class VideoSupportActivity extends FragmentActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+//        if (savedInstanceState == null) {
+//            SampleVideoSupportFragment sampleVideoSupportFragment = new SampleVideoSupportFragment();
+//            getSupportFragmentManager().beginTransaction()
+//                    .replace(android.R.id.content, sampleVideoSupportFragment)
+//                    .commit();
+//        }
+
         if (savedInstanceState == null) {
-            SampleVideoSupportFragment sampleVideoSupportFragment = new SampleVideoSupportFragment();
+            CloudwalkerPlayerFragment sampleVideoSupportFragment = new CloudwalkerPlayerFragment();
             getSupportFragmentManager().beginTransaction()
                     .replace(android.R.id.content, sampleVideoSupportFragment)
                     .commit();
         }
     }
-
-
-
 
 
     @Override

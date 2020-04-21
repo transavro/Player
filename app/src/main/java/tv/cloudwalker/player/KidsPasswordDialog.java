@@ -29,18 +29,12 @@ public class KidsPasswordDialog extends DialogFragment implements View.OnClickLi
     private TextView pass1, pass2, pass3, pass4;
     private int count = 0;
     private LinearLayout passParent;
-    private WeWatchGrpc.WeWatchStub weWatchStub;
-    private String token;
 
 
     public KidsPasswordDialog() {
 
     }
 
-    public KidsPasswordDialog(WeWatchGrpc.WeWatchStub weWatchStub, String token) {
-        this.weWatchStub = weWatchStub;
-        this.token = token;
-    }
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -168,64 +162,9 @@ public class KidsPasswordDialog extends DialogFragment implements View.OnClickLi
     public void onClick(final View view) {
         switch (view.getId()) {
             case R.id.passwordButton: {
-
-                final String groupId = mergingCode();
-
-                Log.d(TAG, "onClick: target id " + groupId);
-
-                weWatchStub.joinRoom(Wewatch.JoinRoomRequest.newBuilder().setToken(token).setRoomId(Integer.parseInt(groupId)).build()
-                        , new StreamObserver<Wewatch.JoinRoomResponse>() {
-
-                    @Override
-                    public void onNext(final Wewatch.JoinRoomResponse value) {
-                        Log.i(TAG, "onNext: join room ");
-                        switch (value.getJointState()) {
-                            case ADDED: {
-                                getActivity().runOnUiThread(new Runnable() {
-                                    @Override
-                                    public void run() {
-                                        Toast.makeText(getContext(), "Added to group !!", Toast.LENGTH_SHORT).show();
-                                        Bundle bundle = new Bundle();
-                                        bundle.putInt("roomId", Integer.parseInt(groupId));
-                                        bundle.putByteArray(Wewatch.RoomMeta.class.getSimpleName(), value.getRoomMeta().toByteArray());
-                                        Intent intent = new Intent().putExtras(bundle);
-                                        getTargetFragment().onActivityResult(getTargetRequestCode(), Activity.RESULT_OK, intent);
-                                        KidsPasswordDialog.this.dismiss();
-                                    }
-                                });
-                                return;
-                            }
-                            case ALREADY:
-                                getActivity().runOnUiThread(new Runnable() {
-                                    @Override
-                                    public void run() {
-                                        Toast.makeText(getContext(), "Already in the group !!", Toast.LENGTH_SHORT).show();
-                                        KidsPasswordDialog.this.dismiss();
-                                    }
-                                });
-                                return;
-                            case UNKNOWN:
-                                getActivity().runOnUiThread(new Runnable() {
-                                    @Override
-                                    public void run() {
-                                        Toast.makeText(getContext(), "Group Doesnt exits !!", Toast.LENGTH_SHORT).show();
-                                        KidsPasswordDialog.this.dismiss();
-                                    }
-                                });
-                                return;
-                        }
-                    }
-
-                    @Override
-                    public void onError(Throwable t) {
-                        Log.e(TAG, "onError: join room ",t.getCause() );
-                    }
-
-                    @Override
-                    public void onCompleted() {
-                        Log.i(TAG, "onCompleted: join room ");
-                    }
-                });
+                Intent intent = new Intent().putExtra("roomId", Integer.parseInt(mergingCode()));
+                getTargetFragment().onActivityResult(getTargetRequestCode(), Activity.RESULT_OK, intent);
+                KidsPasswordDialog.this.dismiss();
             }
             break;
             case R.id.clearButton: {
