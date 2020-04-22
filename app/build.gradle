@@ -2,7 +2,6 @@ apply plugin: 'com.android.application'
 apply plugin: 'com.google.protobuf'
 
 
-
 android {
     compileSdkVersion 29
     buildToolsVersion "29.0.2"
@@ -31,7 +30,7 @@ android {
             def SEP = "_"
             def buildType = variant.variantData.variantConfiguration.buildType.name
             def version = variant.versionCode
-            def newApkName = project + SEP + buildType  + SEP + version + ".apk"
+            def newApkName = project + SEP + buildType + SEP + version + ".apk"
             output.outputFileName = new File("../$buildType", newApkName)
         }
     }
@@ -57,13 +56,13 @@ protobuf {
                 remove java
             }
             task.plugins {
-                javalite { }
+                javalite {}
             }
         }
     }
 }
 
-sourceSets{
+sourceSets {
     main.java.srcDirs += "${protobuf.generatedFilesBaseDir}/main/javalite"
 }
 
@@ -76,8 +75,10 @@ dependencies {
     implementation 'com.google.protobuf:protobuf-lite:3.0.1'
 
 
-//    implementation 'io.nats:jnats:2.6.7'
-
     implementation 'com.spoton:nats-android:2.4.6'
+
+
+    implementation 'com.github.stfalcon:chatkit:0.3.3'
+
 
 }

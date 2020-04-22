@@ -25,6 +25,7 @@ import com.google.protobuf.InvalidProtocolBufferException;
 import java.io.BufferedReader;
 import java.io.FileReader;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.Random;
 
 import cloudwalker.Wewatch;
@@ -57,7 +58,7 @@ public class CloudwalkerPlayerFragment extends VideoSupportFragment {
     private boolean isJoinRoom = false;
     private Connection nc = null;
     private boolean ignoreSelf = false;
-    private Options options = new Options.Builder().server("nats://192.168.0.106:4222")
+    private Options options = new Options.Builder().server("")
             .connectionListener(new ConnectionListener() {
                 @Override
                 public void connectionEvent(Connection conn, Events type) {
@@ -67,6 +68,9 @@ public class CloudwalkerPlayerFragment extends VideoSupportFragment {
                     Log.i(TAG, "connectionEvent: " + conn.toString() + "  " + type.toString());
                 }
             }).build();
+    
+    
+    private Dispatcher mainDispatcher ; 
 
 
     @Override
@@ -81,9 +85,14 @@ public class CloudwalkerPlayerFragment extends VideoSupportFragment {
 
             @Override
             public void onActionClicked(Action action) {
+                super.onActionClicked(action);
                 if (action.getId() == 7777) {
                     if (!isRoomMade && !isJoinRoom) {
-                        makeRoom(action);
+                        if(currentUrl.isEmpty()){
+                            Toast.makeText(getActivity(), "Please play any video to make a room ", Toast.LENGTH_SHORT).show();
+                        }else {
+                            makeRoom(action);
+                        }
                     } else if (isJoinRoom) {
                         Toast.makeText(getActivity(), "Already Join a room with id = " + roomId, Toast.LENGTH_SHORT).show();
                     } else {
@@ -97,29 +106,30 @@ public class CloudwalkerPlayerFragment extends VideoSupportFragment {
                     } else {
                         showDialogPopUp();
                     }
+                }else if (action.getId() == R.id.lb_control_more_actions){
+                    selectSource();
                 } else {
                     if (nc != null && !roomId.isEmpty()) {
                         Log.i(TAG, "onActionClicked: PUBLISHING... " + roomId + "  " + ignoreSelf);
                         streamWriter(action);
                     }
                 }
-                super.onActionClicked(action);
             }
         };
         MediaSessionCompat mMediaSessionCompat = new MediaSessionCompat(getActivity(), MEDIA_SESSION_COMPAT_TOKEN);
         mMediaPlayerGlue.connectToMediaSession(mMediaSessionCompat);
         mMediaPlayerGlue.setHost(mHost);
         mMediaPlayerGlue.setMode(PlaybackControlsRow.RepeatAction.INDEX_NONE);
-        selectSource();
+
     }
 
     private void streamWriter(Action action) {
         Wewatch.PlayerStates playerStates = null;
         if (action.getId() == R.id.lb_control_play_pause) {
             if (mMediaPlayerGlue.isPlaying()) {
-                playerStates = Wewatch.PlayerStates.PAUSE;
-            } else {
                 playerStates = Wewatch.PlayerStates.PLAY;
+            } else {
+                playerStates = Wewatch.PlayerStates.PAUSE;
             }
         } else if (action.getId() == R.id.lb_control_fast_rewind) {
             playerStates = Wewatch.PlayerStates.REWIND;
@@ -131,6 +141,7 @@ public class CloudwalkerPlayerFragment extends VideoSupportFragment {
             return;
         }
         ignoreSelf = true;
+
         nc.publish(roomId, Wewatch.Messaging.newBuilder()
                 .setCurrentPosition(mMediaPlayerGlue.getCurrentPosition())
                 .setTitle(mMediaPlayerGlue.getTitle().toString())
@@ -191,6 +202,16 @@ public class CloudwalkerPlayerFragment extends VideoSupportFragment {
                 mMediaPlayerGlue.getPlayerAdapter().setDataSource(Uri.parse(currentUrl));
                 mMediaPlayerGlue.setSeekEnabled(false);
                 playWhenReady();
+                if(!roomId.isEmpty() && nc != null){
+
+                    nc.publish(roomId, Wewatch.Messaging.newBuilder()
+                    .setTitle(mMediaPlayerGlue.getTitle().toString())
+                    .setSubtitle(mMediaPlayerGlue.getTitle().toString())
+                    .setUrl(currentUrl)
+                    .setCurrentPosition(mMediaPlayerGlue.getCurrentPosition())
+                    .setTimeStamp(System.currentTimeMillis())
+                    .setPlayerState(Wewatch.PlayerStates.PLAY).build().toByteArray());
+                }
                 dialog.dismiss();
             }
         });
@@ -232,10 +253,11 @@ public class CloudwalkerPlayerFragment extends VideoSupportFragment {
 
     @Override
     public void onStop() {
-        mMediaPlayerGlue.disconnectToMediaSession();
         try {
+            mMediaPlayerGlue.disconnectToMediaSession();
+            mainDispatcher.unsubscribe(roomId);
             nc.close();
-        } catch (InterruptedException e) {
+        } catch (Exception e) {
             e.printStackTrace();
         }
         super.onStop();
@@ -258,17 +280,95 @@ public class CloudwalkerPlayerFragment extends VideoSupportFragment {
         mMediaPlayerGlue.getControlsRow().getPrimaryActionsAdapter().notifyItemRangeChanged(4, 1);
         isJoinRoom = true;
         Log.i(TAG, "joinRoom: ");
+        ignoreSelf = true;
+        Log.d(TAG, "joinRoom: JOIN REQUEST PUBLISHED..");
+        nc.publish(roomId, getEthMac(), "sync".getBytes(StandardCharsets.UTF_8));
+
+        Dispatcher d = nc.createDispatcher(new MessageHandler() {
+            @Override
+            public void onMessage(Message msg) throws InterruptedException {
+                getActivity().runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        try {
+                            
+                            Wewatch.Messaging value = Wewatch.Messaging.parseFrom(msg.getData());
+                            mMediaPlayerGlue.setTitle(value.getTitle());
+                            mMediaPlayerGlue.setSubtitle("WeWatch Group Id = "+roomId);
+                            mMediaPlayerGlue.setSubtitle("WeWatch Group Id = "+roomId);
+                            currentUrl = value.getUrl();
+                            mMediaPlayerGlue.getPlayerAdapter().setDataSource(Uri.parse(currentUrl));
+                            mMediaPlayerGlue.setSeekEnabled(false);
+                            if (mMediaPlayerGlue.isPrepared()) {
+                                mMediaPlayerGlue.seekTo((value.getCurrentPosition() + (System.currentTimeMillis() - value.getTimeStamp()) + 500)); //offset of 1000
+                                if(value.getPlayerState() == Wewatch.PlayerStates.PAUSE){
+                                    mMediaPlayerGlue.pause();
+                                }else {
+                                    mMediaPlayerGlue.play();   
+                                }
+                            } else {
+                                mMediaPlayerGlue.addPlayerCallback(new PlaybackGlue.PlayerCallback() {
+                                    @Override
+                                    public void onPreparedStateChanged(PlaybackGlue glue) {
+                                        if (glue.isPrepared()) {
+                                            glue.removePlayerCallback(this);
+                                            mMediaPlayerGlue.seekTo((value.getCurrentPosition() + (System.currentTimeMillis() - value.getTimeStamp()) + 500));
+                                            if(value.getPlayerState() == Wewatch.PlayerStates.PAUSE){
+                                                glue.pause();
+                                            }else {
+                                                glue.play();
+                                            }
+                                        }
+                                    }
+                                });
+                            }
+
+                        } catch (InvalidProtocolBufferException e) {
+                            e.printStackTrace();
+                        }
+                    }
+                });
+            }
+        });
+
+        d.subscribe(getEthMac());
+        d.unsubscribe(getEthMac(), 5000);
         startReading();
     }
 
     private void startReading() {
-        Dispatcher d = nc.createDispatcher(new MessageHandler() {
+        mainDispatcher = nc.createDispatcher(new MessageHandler() {
             @Override
             public void onMessage(Message msg) throws InterruptedException {
-                if (ignoreSelf) {
+                
+                
+                if (isRoomMade && msg.getReplyTo() != null && !msg.getReplyTo().isEmpty()) 
+                {
+                    Log.d(TAG, "onMessage: HADELING SYNCE MSG " + isRoomMade + "  " + ignoreSelf);
+                    Wewatch.PlayerStates playerStates = null;
+                    if (mMediaPlayerGlue.isPlaying()) {
+                        playerStates = Wewatch.PlayerStates.PLAY;
+                    } else {
+                        playerStates = Wewatch.PlayerStates.PAUSE;
+                    }
+                    nc.publish(msg.getReplyTo(),
+                            Wewatch.Messaging.newBuilder()
+                                    .setTitle(mMediaPlayerGlue.getTitle().toString())
+                                    .setSubtitle(mMediaPlayerGlue.getSubtitle().toString())
+                                    .setUrl(currentUrl)
+                                    .setPlayerState(playerStates)
+                                    .setCurrentPosition(mMediaPlayerGlue.getCurrentPosition())
+                                    .setTimeStamp(System.currentTimeMillis()).build().toByteArray());
+
+                } 
+                else if (ignoreSelf) 
+                {
+                    Log.d(TAG, "onMessage: IGNORE NOOP " + ignoreSelf);
                     ignoreSelf = false;
                     //noop
-                } else {
+                }
+                else {
+                    Log.d(TAG, "onMessage: HADELING RECEIVE MSG ");
                     getActivity().runOnUiThread(new Runnable() {
                         @Override
                         public void run() {
@@ -283,7 +383,8 @@ public class CloudwalkerPlayerFragment extends VideoSupportFragment {
             }
         });
 
-        d.subscribe(roomId);
+        mainDispatcher.subscribe(roomId);
+        
     }
 
 
@@ -294,14 +395,13 @@ public class CloudwalkerPlayerFragment extends VideoSupportFragment {
             mMediaPlayerGlue.setTitle(value.getTitle());
         }
         if (value.getSubtitle() != mMediaPlayerGlue.getSubtitle()) {
-            mMediaPlayerGlue.setSubtitle(value.getSubtitle());
+            mMediaPlayerGlue.setSubtitle("WeWatch Group Id = "+roomId);
         }
         if (!currentUrl.equals(value.getUrl())) {
             isSourceDiff = true;
             currentUrl = value.getUrl();
         } else {
-
-            mMediaPlayerGlue.seekTo((value.getCurrentPosition()) + (System.currentTimeMillis() - value.getTimeStamp()));
+            mMediaPlayerGlue.seekTo((value.getCurrentPosition()) + (System.currentTimeMillis() - value.getTimeStamp()) + 500);
         }
         switch (value.getPlayerState()) {
             case PLAY: {
@@ -309,7 +409,7 @@ public class CloudwalkerPlayerFragment extends VideoSupportFragment {
                     mMediaPlayerGlue.getPlayerAdapter().setDataSource(Uri.parse(currentUrl));
                     mMediaPlayerGlue.setSeekEnabled(false);
                     if (mMediaPlayerGlue.isPrepared()) {
-                        mMediaPlayerGlue.seekTo((value.getCurrentPosition() + (System.currentTimeMillis() - value.getTimeStamp())));
+                        mMediaPlayerGlue.seekTo((value.getCurrentPosition() + (System.currentTimeMillis() - value.getTimeStamp()) + 500));
                         mMediaPlayerGlue.play();
                     } else {
                         mMediaPlayerGlue.addPlayerCallback(new PlaybackGlue.PlayerCallback() {
@@ -317,7 +417,7 @@ public class CloudwalkerPlayerFragment extends VideoSupportFragment {
                             public void onPreparedStateChanged(PlaybackGlue glue) {
                                 if (glue.isPrepared()) {
                                     glue.removePlayerCallback(this);
-                                    mMediaPlayerGlue.seekTo((value.getCurrentPosition() + (System.currentTimeMillis() - value.getTimeStamp())));
+                                    mMediaPlayerGlue.seekTo((value.getCurrentPosition() + (System.currentTimeMillis() - value.getTimeStamp()) + 500));
                                     glue.play();
                                 }
                             }
@@ -335,7 +435,7 @@ public class CloudwalkerPlayerFragment extends VideoSupportFragment {
                     mMediaPlayerGlue.getPlayerAdapter().setDataSource(Uri.parse(currentUrl));
                     mMediaPlayerGlue.setSeekEnabled(false);
                     if (mMediaPlayerGlue.isPrepared()) {
-                        mMediaPlayerGlue.seekTo((value.getCurrentPosition() + (System.currentTimeMillis() - value.getTimeStamp())));
+                        mMediaPlayerGlue.seekTo((value.getCurrentPosition() + (System.currentTimeMillis() - value.getTimeStamp()) + 500));
                         mMediaPlayerGlue.pause();
                     } else {
                         mMediaPlayerGlue.addPlayerCallback(new PlaybackGlue.PlayerCallback() {
@@ -343,7 +443,7 @@ public class CloudwalkerPlayerFragment extends VideoSupportFragment {
                             public void onPreparedStateChanged(PlaybackGlue glue) {
                                 if (glue.isPrepared()) {
                                     glue.removePlayerCallback(this);
-                                    mMediaPlayerGlue.seekTo((value.getCurrentPosition() + (System.currentTimeMillis() - value.getTimeStamp())));
+                                    mMediaPlayerGlue.seekTo((value.getCurrentPosition() + (System.currentTimeMillis() - value.getTimeStamp()) + 500));
                                     glue.pause();
                                 }
                             }
@@ -362,7 +462,8 @@ public class CloudwalkerPlayerFragment extends VideoSupportFragment {
                     mMediaPlayerGlue.getPlayerAdapter().setDataSource(Uri.parse(currentUrl));
                     mMediaPlayerGlue.setSeekEnabled(false);
                     if (mMediaPlayerGlue.isPrepared()) {
-                        mMediaPlayerGlue.seekTo((value.getCurrentPosition() + (System.currentTimeMillis() - value.getTimeStamp())));
+                        mMediaPlayerGlue.seekTo((value.getCurrentPosition() + (System.currentTimeMillis() - value.getTimeStamp()) + 500));
+                        mMediaPlayerGlue.play();
                         mMediaPlayerGlue.rewind();
 
                     } else {
@@ -371,7 +472,8 @@ public class CloudwalkerPlayerFragment extends VideoSupportFragment {
                             public void onPreparedStateChanged(PlaybackGlue glue) {
                                 if (glue.isPrepared()) {
                                     glue.removePlayerCallback(this);
-                                    mMediaPlayerGlue.seekTo((value.getCurrentPosition() + (System.currentTimeMillis() - value.getTimeStamp())));
+                                    mMediaPlayerGlue.seekTo((value.getCurrentPosition() + (System.currentTimeMillis() - value.getTimeStamp()) + 500));
+                                    mMediaPlayerGlue.play();
                                     mMediaPlayerGlue.rewind();
                                 }
                             }
@@ -390,7 +492,8 @@ public class CloudwalkerPlayerFragment extends VideoSupportFragment {
                     mMediaPlayerGlue.getPlayerAdapter().setDataSource(Uri.parse(currentUrl));
                     mMediaPlayerGlue.setSeekEnabled(false);
                     if (mMediaPlayerGlue.isPrepared()) {
-                        mMediaPlayerGlue.seekTo((value.getCurrentPosition() + (System.currentTimeMillis() - value.getTimeStamp())));
+                        mMediaPlayerGlue.seekTo((value.getCurrentPosition() + (System.currentTimeMillis() - value.getTimeStamp()) + 500));
+                        mMediaPlayerGlue.play();
                         mMediaPlayerGlue.fastForward();
 
                     } else {
@@ -399,7 +502,8 @@ public class CloudwalkerPlayerFragment extends VideoSupportFragment {
                             public void onPreparedStateChanged(PlaybackGlue glue) {
                                 if (glue.isPrepared()) {
                                     glue.removePlayerCallback(this);
-                                    mMediaPlayerGlue.seekTo((value.getCurrentPosition() + (System.currentTimeMillis() - value.getTimeStamp())));
+                                    mMediaPlayerGlue.seekTo((value.getCurrentPosition() + (System.currentTimeMillis() - value.getTimeStamp()) + 500));
+                                    mMediaPlayerGlue.play();
                                     mMediaPlayerGlue.fastForward();
                                 }
                             }
@@ -411,21 +515,12 @@ public class CloudwalkerPlayerFragment extends VideoSupportFragment {
                 }
             }
             break;
-            case SYNC: {
-
-                if (nc == null) {
-                    return;
-                }
-
-            }
-            break;
             case BUFFER: {
 
             }
             break;
         }
     }
-
 
     // utility methods
     private void showToast(final String message) {
@@ -436,9 +531,8 @@ public class CloudwalkerPlayerFragment extends VideoSupportFragment {
             }
         });
     }
-
-
-    public String getEthMacAddress() {
+    
+    public String getEthMac() {
         try {
             return loadFileAsString("/sys/class/net/eth0/address").toUpperCase().substring(0, 17);
         } catch (IOException e) {

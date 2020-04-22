@@ -59,6 +59,7 @@ class PlaybackTransportControlGlueSample<T extends PlayerAdapter> extends androi
 
     private PlaybackControlsRow.MoreActions hostPlayerAction;
     private PlaybackControlsRow.MoreActions addInGroupAction;
+    private PlaybackControlsRow.MoreActions selectVideoAction;
 
 
 //    private PlaybackControlsRow.PictureInPictureAction mPipAction;
@@ -87,6 +88,8 @@ class PlaybackTransportControlGlueSample<T extends PlayerAdapter> extends androi
         addInGroupAction.setIcon(getContext().getResources().getDrawable(R.drawable.add_in_room));
         addInGroupAction.setId(8888);
 
+        selectVideoAction  = new PlaybackControlsRow.MoreActions(context);
+
         mFastForwardAction = new PlaybackControlsRow.FastForwardAction(context);
         mRewindAction = new PlaybackControlsRow.RewindAction(context);
 
@@ -111,6 +114,7 @@ class PlaybackTransportControlGlueSample<T extends PlayerAdapter> extends androi
 //        adapter.add(mClosedCaptioningAction);
         adapter.add(hostPlayerAction);
         adapter.add(addInGroupAction);
+        adapter.add(selectVideoAction);
     }
 
     @Override
