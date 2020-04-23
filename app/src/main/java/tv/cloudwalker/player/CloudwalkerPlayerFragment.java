@@ -7,6 +7,8 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.support.v4.media.session.MediaSessionCompat;
 import android.util.Log;
+import android.widget.EditText;
+import android.widget.LinearLayout;
 import android.widget.Toast;
 
 import androidx.annotation.Nullable;
@@ -56,9 +58,10 @@ public class CloudwalkerPlayerFragment extends VideoSupportFragment {
     private String roomId = "";
     private boolean isRoomMade = false;
     private boolean isJoinRoom = false;
+    private String userName = "";
     private Connection nc = null;
     private boolean ignoreSelf = false;
-    private Options options = new Options.Builder().server("")
+    private Options options = new Options.Builder().server("nats://3.6.231.212:80")
             .connectionListener(new ConnectionListener() {
                 @Override
                 public void connectionEvent(Connection conn, Events type) {
@@ -68,9 +71,9 @@ public class CloudwalkerPlayerFragment extends VideoSupportFragment {
                     Log.i(TAG, "connectionEvent: " + conn.toString() + "  " + type.toString());
                 }
             }).build();
-    
-    
-    private Dispatcher mainDispatcher ; 
+
+
+    private Dispatcher mainDispatcher;
 
 
     @Override
@@ -81,6 +84,7 @@ public class CloudwalkerPlayerFragment extends VideoSupportFragment {
         } catch (InterruptedException e) {
             e.printStackTrace();
         }
+        inputName();
         mMediaPlayerGlue = new PlaybackTransportControlGlueSample<MediaPlayerAdapter>(getActivity(), new MediaPlayerAdapter(getActivity())) {
 
             @Override
@@ -88,9 +92,9 @@ public class CloudwalkerPlayerFragment extends VideoSupportFragment {
                 super.onActionClicked(action);
                 if (action.getId() == 7777) {
                     if (!isRoomMade && !isJoinRoom) {
-                        if(currentUrl.isEmpty()){
+                        if (currentUrl.isEmpty()) {
                             Toast.makeText(getActivity(), "Please play any video to make a room ", Toast.LENGTH_SHORT).show();
-                        }else {
+                        } else {
                             makeRoom(action);
                         }
                     } else if (isJoinRoom) {
@@ -106,7 +110,7 @@ public class CloudwalkerPlayerFragment extends VideoSupportFragment {
                     } else {
                         showDialogPopUp();
                     }
-                }else if (action.getId() == R.id.lb_control_more_actions){
+                } else if (action.getId() == R.id.lb_control_more_actions) {
                     selectSource();
                 } else {
                     if (nc != null && !roomId.isEmpty()) {
@@ -121,6 +125,36 @@ public class CloudwalkerPlayerFragment extends VideoSupportFragment {
         mMediaPlayerGlue.setHost(mHost);
         mMediaPlayerGlue.setMode(PlaybackControlsRow.RepeatAction.INDEX_NONE);
 
+    }
+
+
+    private void inputName() {
+
+        AlertDialog.Builder alertDialog = new AlertDialog.Builder(getActivity(), R.style.Theme_AppCompat);
+        alertDialog.setTitle("Enter Name");
+        alertDialog.setMessage("Enter Your Name");
+
+        final EditText input = new EditText(getActivity());
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(400, 400);
+        lp.setMarginStart(20);
+        lp.setMarginEnd(20);
+        input.setLayoutParams(lp);
+        alertDialog.setView(input);
+
+        alertDialog.setCancelable(false);
+
+        alertDialog.setPositiveButton("ok", new DialogInterface.OnClickListener() {
+            public void onClick(DialogInterface dialog, int which) {
+                userName = input.getText().toString();
+                if (!userName.isEmpty()) {
+                    dialog.dismiss();
+                } else {
+                    Toast.makeText(getActivity(), "Please enter your Name.", Toast.LENGTH_SHORT).show();
+                }
+            }
+        });
+
+        alertDialog.show();
     }
 
     private void streamWriter(Action action) {
@@ -196,21 +230,21 @@ public class CloudwalkerPlayerFragment extends VideoSupportFragment {
             @Override
             public void onClick(DialogInterface dialog, int which) {
 
-                mMediaPlayerGlue.setSubtitle("Video Subtitle " + which);
+                mMediaPlayerGlue.setSubtitle("WeWatch Group Id = " + roomId);
                 mMediaPlayerGlue.setTitle("Video Title" + which);
                 currentUrl = animals[which];
                 mMediaPlayerGlue.getPlayerAdapter().setDataSource(Uri.parse(currentUrl));
                 mMediaPlayerGlue.setSeekEnabled(false);
                 playWhenReady();
-                if(!roomId.isEmpty() && nc != null){
+                if (!roomId.isEmpty() && nc != null) {
 
                     nc.publish(roomId, Wewatch.Messaging.newBuilder()
-                    .setTitle(mMediaPlayerGlue.getTitle().toString())
-                    .setSubtitle(mMediaPlayerGlue.getTitle().toString())
-                    .setUrl(currentUrl)
-                    .setCurrentPosition(mMediaPlayerGlue.getCurrentPosition())
-                    .setTimeStamp(System.currentTimeMillis())
-                    .setPlayerState(Wewatch.PlayerStates.PLAY).build().toByteArray());
+                            .setTitle(mMediaPlayerGlue.getTitle().toString())
+                            .setSubtitle(mMediaPlayerGlue.getTitle().toString())
+                            .setUrl(currentUrl)
+                            .setCurrentPosition(mMediaPlayerGlue.getCurrentPosition())
+                            .setTimeStamp(System.currentTimeMillis())
+                            .setPlayerState(Wewatch.PlayerStates.PLAY).build().toByteArray());
                 }
                 dialog.dismiss();
             }
@@ -271,6 +305,7 @@ public class CloudwalkerPlayerFragment extends VideoSupportFragment {
         Log.i(TAG, "makeRoom: " + roomId);
         action.setLabel1(String.valueOf(roomId));
         mMediaPlayerGlue.getControlsRow().getPrimaryActionsAdapter().notifyItemRangeChanged(3, 1);
+        mMediaPlayerGlue.setSubtitle("WeWatch Group Id = " + roomId);
         isRoomMade = true;
         startReading();
     }
@@ -282,7 +317,7 @@ public class CloudwalkerPlayerFragment extends VideoSupportFragment {
         Log.i(TAG, "joinRoom: ");
         ignoreSelf = true;
         Log.d(TAG, "joinRoom: JOIN REQUEST PUBLISHED..");
-        nc.publish(roomId, getEthMac(), "sync".getBytes(StandardCharsets.UTF_8));
+        nc.publish(roomId, userName, "sync".getBytes(StandardCharsets.UTF_8));
 
         Dispatcher d = nc.createDispatcher(new MessageHandler() {
             @Override
@@ -291,20 +326,19 @@ public class CloudwalkerPlayerFragment extends VideoSupportFragment {
                     @Override
                     public void run() {
                         try {
-                            
+
                             Wewatch.Messaging value = Wewatch.Messaging.parseFrom(msg.getData());
                             mMediaPlayerGlue.setTitle(value.getTitle());
-                            mMediaPlayerGlue.setSubtitle("WeWatch Group Id = "+roomId);
-                            mMediaPlayerGlue.setSubtitle("WeWatch Group Id = "+roomId);
+                            mMediaPlayerGlue.setSubtitle("WeWatch Group Id = " + roomId);
                             currentUrl = value.getUrl();
                             mMediaPlayerGlue.getPlayerAdapter().setDataSource(Uri.parse(currentUrl));
                             mMediaPlayerGlue.setSeekEnabled(false);
                             if (mMediaPlayerGlue.isPrepared()) {
                                 mMediaPlayerGlue.seekTo((value.getCurrentPosition() + (System.currentTimeMillis() - value.getTimeStamp()) + 500)); //offset of 1000
-                                if(value.getPlayerState() == Wewatch.PlayerStates.PAUSE){
+                                if (value.getPlayerState() == Wewatch.PlayerStates.PAUSE) {
                                     mMediaPlayerGlue.pause();
-                                }else {
-                                    mMediaPlayerGlue.play();   
+                                } else {
+                                    mMediaPlayerGlue.play();
                                 }
                             } else {
                                 mMediaPlayerGlue.addPlayerCallback(new PlaybackGlue.PlayerCallback() {
@@ -313,9 +347,9 @@ public class CloudwalkerPlayerFragment extends VideoSupportFragment {
                                         if (glue.isPrepared()) {
                                             glue.removePlayerCallback(this);
                                             mMediaPlayerGlue.seekTo((value.getCurrentPosition() + (System.currentTimeMillis() - value.getTimeStamp()) + 500));
-                                            if(value.getPlayerState() == Wewatch.PlayerStates.PAUSE){
+                                            if (value.getPlayerState() == Wewatch.PlayerStates.PAUSE) {
                                                 glue.pause();
-                                            }else {
+                                            } else {
                                                 glue.play();
                                             }
                                         }
@@ -331,8 +365,8 @@ public class CloudwalkerPlayerFragment extends VideoSupportFragment {
             }
         });
 
-        d.subscribe(getEthMac());
-        d.unsubscribe(getEthMac(), 5000);
+        d.subscribe(userName);
+        d.unsubscribe(userName, 5000);
         startReading();
     }
 
@@ -340,10 +374,9 @@ public class CloudwalkerPlayerFragment extends VideoSupportFragment {
         mainDispatcher = nc.createDispatcher(new MessageHandler() {
             @Override
             public void onMessage(Message msg) throws InterruptedException {
-                
-                
-                if (isRoomMade && msg.getReplyTo() != null && !msg.getReplyTo().isEmpty()) 
-                {
+
+
+                if (isRoomMade && msg.getReplyTo() != null && !msg.getReplyTo().isEmpty()) {
                     Log.d(TAG, "onMessage: HADELING SYNCE MSG " + isRoomMade + "  " + ignoreSelf);
                     Wewatch.PlayerStates playerStates = null;
                     if (mMediaPlayerGlue.isPlaying()) {
@@ -360,14 +393,11 @@ public class CloudwalkerPlayerFragment extends VideoSupportFragment {
                                     .setCurrentPosition(mMediaPlayerGlue.getCurrentPosition())
                                     .setTimeStamp(System.currentTimeMillis()).build().toByteArray());
 
-                } 
-                else if (ignoreSelf) 
-                {
+                } else if (ignoreSelf) {
                     Log.d(TAG, "onMessage: IGNORE NOOP " + ignoreSelf);
                     ignoreSelf = false;
                     //noop
-                }
-                else {
+                } else {
                     Log.d(TAG, "onMessage: HADELING RECEIVE MSG ");
                     getActivity().runOnUiThread(new Runnable() {
                         @Override
@@ -384,7 +414,7 @@ public class CloudwalkerPlayerFragment extends VideoSupportFragment {
         });
 
         mainDispatcher.subscribe(roomId);
-        
+
     }
 
 
@@ -395,13 +425,13 @@ public class CloudwalkerPlayerFragment extends VideoSupportFragment {
             mMediaPlayerGlue.setTitle(value.getTitle());
         }
         if (value.getSubtitle() != mMediaPlayerGlue.getSubtitle()) {
-            mMediaPlayerGlue.setSubtitle("WeWatch Group Id = "+roomId);
+            mMediaPlayerGlue.setSubtitle("WeWatch Group Id = " + roomId);
         }
         if (!currentUrl.equals(value.getUrl())) {
             isSourceDiff = true;
             currentUrl = value.getUrl();
         } else {
-            mMediaPlayerGlue.seekTo((value.getCurrentPosition()) + (System.currentTimeMillis() - value.getTimeStamp()) + 500);
+//            mMediaPlayerGlue.seekTo((value.getCurrentPosition()) + (System.currentTimeMillis() - value.getTimeStamp()) + 500);
         }
         switch (value.getPlayerState()) {
             case PLAY: {
@@ -425,6 +455,7 @@ public class CloudwalkerPlayerFragment extends VideoSupportFragment {
                     }
 
                 } else {
+                    mMediaPlayerGlue.seekTo((value.getCurrentPosition()) + (System.currentTimeMillis() - value.getTimeStamp()) + 500);
                     mMediaPlayerGlue.play();
                 }
             }
@@ -451,6 +482,7 @@ public class CloudwalkerPlayerFragment extends VideoSupportFragment {
                     }
 
                 } else {
+                    mMediaPlayerGlue.seekTo((value.getCurrentPosition()) + (System.currentTimeMillis() - value.getTimeStamp()) + 500);
                     mMediaPlayerGlue.pause();
                 }
             }
@@ -464,7 +496,7 @@ public class CloudwalkerPlayerFragment extends VideoSupportFragment {
                     if (mMediaPlayerGlue.isPrepared()) {
                         mMediaPlayerGlue.seekTo((value.getCurrentPosition() + (System.currentTimeMillis() - value.getTimeStamp()) + 500));
                         mMediaPlayerGlue.play();
-                        mMediaPlayerGlue.rewind();
+//                        mMediaPlayerGlue.rewind();
 
                     } else {
                         mMediaPlayerGlue.addPlayerCallback(new PlaybackGlue.PlayerCallback() {
@@ -474,14 +506,16 @@ public class CloudwalkerPlayerFragment extends VideoSupportFragment {
                                     glue.removePlayerCallback(this);
                                     mMediaPlayerGlue.seekTo((value.getCurrentPosition() + (System.currentTimeMillis() - value.getTimeStamp()) + 500));
                                     mMediaPlayerGlue.play();
-                                    mMediaPlayerGlue.rewind();
+//                                    mMediaPlayerGlue.rewind();
                                 }
                             }
                         });
                     }
 
                 } else {
-                    mMediaPlayerGlue.rewind();
+                    mMediaPlayerGlue.seekTo((value.getCurrentPosition()) + (System.currentTimeMillis() - value.getTimeStamp()) + 500);
+
+//                    mMediaPlayerGlue.rewind();
                 }
             }
             break;
@@ -494,7 +528,7 @@ public class CloudwalkerPlayerFragment extends VideoSupportFragment {
                     if (mMediaPlayerGlue.isPrepared()) {
                         mMediaPlayerGlue.seekTo((value.getCurrentPosition() + (System.currentTimeMillis() - value.getTimeStamp()) + 500));
                         mMediaPlayerGlue.play();
-                        mMediaPlayerGlue.fastForward();
+//                        mMediaPlayerGlue.fastForward();
 
                     } else {
                         mMediaPlayerGlue.addPlayerCallback(new PlaybackGlue.PlayerCallback() {
@@ -504,14 +538,17 @@ public class CloudwalkerPlayerFragment extends VideoSupportFragment {
                                     glue.removePlayerCallback(this);
                                     mMediaPlayerGlue.seekTo((value.getCurrentPosition() + (System.currentTimeMillis() - value.getTimeStamp()) + 500));
                                     mMediaPlayerGlue.play();
-                                    mMediaPlayerGlue.fastForward();
+//                                    mMediaPlayerGlue.fastForward();
                                 }
                             }
                         });
                     }
 
                 } else {
-                    mMediaPlayerGlue.fastForward();
+                    mMediaPlayerGlue.seekTo((value.getCurrentPosition()) + (System.currentTimeMillis() - value.getTimeStamp()) + 500);
+
+
+//                    mMediaPlayerGlue.fastForward();
                 }
             }
             break;
@@ -531,8 +568,8 @@ public class CloudwalkerPlayerFragment extends VideoSupportFragment {
             }
         });
     }
-    
-    public String getEthMac() {
+
+    private String getEthMac() {
         try {
             return loadFileAsString("/sys/class/net/eth0/address").toUpperCase().substring(0, 17);
         } catch (IOException e) {
