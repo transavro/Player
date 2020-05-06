@@ -21,3 +21,9 @@ enum PlayerStates{
     SYNC = 6;
 }
 
+message Chat{
+    string userName = 1;
+    string id = 2;
+    string message = 3;
+}
+

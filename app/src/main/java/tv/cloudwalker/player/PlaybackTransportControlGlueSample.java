@@ -60,6 +60,7 @@ class PlaybackTransportControlGlueSample<T extends PlayerAdapter> extends androi
     private PlaybackControlsRow.MoreActions hostPlayerAction;
     private PlaybackControlsRow.MoreActions addInGroupAction;
     private PlaybackControlsRow.MoreActions selectVideoAction;
+    private PlaybackControlsRow.MoreActions qrAction;
 
 
 //    private PlaybackControlsRow.PictureInPictureAction mPipAction;
@@ -88,6 +89,10 @@ class PlaybackTransportControlGlueSample<T extends PlayerAdapter> extends androi
         addInGroupAction.setIcon(getContext().getResources().getDrawable(R.drawable.add_in_room));
         addInGroupAction.setId(8888);
 
+        qrAction  = new PlaybackControlsRow.MoreActions(context);
+        qrAction.setIcon(getContext().getResources().getDrawable(R.drawable.info));
+        qrAction.setId(9999);
+
         selectVideoAction  = new PlaybackControlsRow.MoreActions(context);
 
         mFastForwardAction = new PlaybackControlsRow.FastForwardAction(context);
@@ -98,6 +103,7 @@ class PlaybackTransportControlGlueSample<T extends PlayerAdapter> extends androi
 
     @Override
     protected void onCreateSecondaryActions(ArrayObjectAdapter adapter) {
+        adapter.add(qrAction);
 //        adapter.add(mThumbsUpAction);
 //        adapter.add(mThumbsDownAction);
 //        if (android.os.Build.VERSION.SDK_INT > 23) {

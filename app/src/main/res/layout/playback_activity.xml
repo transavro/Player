@@ -1,21 +1,51 @@
 <?xml version="1.0" encoding="utf-8"?>
-<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="match_parent"
-    android:layout_height="match_parent">
+<FrameLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
 
-    <TextView
-        android:layout_width="200dp"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:animateLayoutChanges="true">
+
+
+
+    <com.stfalcon.chatkit.messages.MessagesList
+        android:id="@+id/messagesList"
+
+        android:layout_width="350dp"
         android:layout_height="match_parent"
-        android:layout_alignParentEnd="true"
-        android:layout_alignParentTop="true"
-        android:id="@+id/loggingText"
-        android:scrollbars = "vertical" />
+        android:layout_marginBottom="200dp"
+        android:focusable="false"
+        android:layout_gravity="top|end"
+        android:visibility="invisible"
+
+        app:dateHeaderFormat="dd MMMM yyyy"
+        app:dateHeaderTextSize="5sp"
+        app:incomingDefaultBubbleColor="@color/back_transparent"
+        app:incomingDefaultBubblePressedColor="@color/ivory_dark"
+        app:incomingDefaultBubbleSelectedColor="@color/gray"
+        app:incomingDefaultImageOverlayPressedColor="@color/black_10"
+        app:incomingDefaultImageOverlaySelectedColor="@color/gray_transparent"
+        app:incomingTextColor="@android:color/white"
+        app:incomingTextLinkColor="@color/green"
+        app:incomingTextSize="18sp"
+
+        app:outcomingDefaultBubbleColor="@color/back_transparent"
+        app:outcomingDefaultBubblePressedColor="@color/green_dark"
+        app:outcomingDefaultBubbleSelectedColor="@color/gray_dark_transparent"
+        app:outcomingDefaultImageOverlayPressedColor="@color/black_10"
+        app:outcomingDefaultImageOverlaySelectedColor="@color/gray_transparent"
+
+        app:outcomingTextColor="@color/white"
+        app:outcomingTextLinkColor="@color/green"
+        app:outcomingTextSize="18sp"
+
+        app:textAutoLink="all"/>
 
     <fragment
-        android:layout_toStartOf="@id/loggingText"
         android:id="@+id/playback_controls_fragment"
         android:name="tv.cloudwalker.player.CloudwalkerPlayerFragment"
         android:layout_width="match_parent"
-        android:layout_height="match_parent" />
+        android:layout_height="match_parent"/>
 
-</RelativeLayout>
+</FrameLayout>

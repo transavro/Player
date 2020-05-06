@@ -23,7 +23,6 @@ android {
         }
     }
 
-
     applicationVariants.all { variant ->
         variant.outputs.each { output ->
             def project = "WeWatch"
@@ -74,11 +73,13 @@ dependencies {
 
     implementation 'com.google.protobuf:protobuf-lite:3.0.1'
 
-
     implementation 'com.spoton:nats-android:2.4.6'
 
 
     implementation 'com.github.stfalcon:chatkit:0.3.3'
 
+
+    implementation 'com.google.zxing:core:3.2.1'
+    implementation 'com.journeyapps:zxing-android-embedded:3.2.0@aar'
 
 }

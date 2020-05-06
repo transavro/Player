@@ -3,11 +3,16 @@ package tv.cloudwalker.player;
 import android.app.Activity;
 import android.content.DialogInterface;
 import android.content.Intent;
+import android.graphics.Bitmap;
+import android.graphics.drawable.ColorDrawable;
 import android.net.Uri;
 import android.os.Bundle;
 import android.support.v4.media.session.MediaSessionCompat;
 import android.util.Log;
+import android.view.Gravity;
+import android.view.Window;
 import android.widget.EditText;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.Toast;
 
@@ -23,21 +28,26 @@ import androidx.leanback.widget.Action;
 import androidx.leanback.widget.PlaybackControlsRow;
 
 import com.google.protobuf.InvalidProtocolBufferException;
+import com.google.zxing.BarcodeFormat;
+import com.google.zxing.MultiFormatWriter;
+import com.google.zxing.WriterException;
+import com.google.zxing.common.BitMatrix;
+import com.journeyapps.barcodescanner.BarcodeEncoder;
 
-import java.io.BufferedReader;
-import java.io.FileReader;
-import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.Locale;
 import java.util.Random;
+import java.util.Timer;
+import java.util.TimerTask;
 
 import cloudwalker.Wewatch;
 import io.nats.client.Connection;
-import io.nats.client.ConnectionListener;
 import io.nats.client.Dispatcher;
 import io.nats.client.Message;
 import io.nats.client.MessageHandler;
 import io.nats.client.Nats;
 import io.nats.client.Options;
+import model.User;
 
 
 public class CloudwalkerPlayerFragment extends VideoSupportFragment {
@@ -62,14 +72,11 @@ public class CloudwalkerPlayerFragment extends VideoSupportFragment {
     private Connection nc = null;
     private boolean ignoreSelf = false;
     private Options options = new Options.Builder().server("nats://3.6.231.212:80")
-            .connectionListener(new ConnectionListener() {
-                @Override
-                public void connectionEvent(Connection conn, Events type) {
-                    if (nc == null) {
-                        nc = conn;
-                    }
-                    Log.i(TAG, "connectionEvent: " + conn.toString() + "  " + type.toString());
+            .connectionListener((conn, type) -> {
+                if (nc == null) {
+                    nc = conn;
                 }
+                Log.i(TAG, "connectionEvent: " + conn.toString() + "  " + type.toString());
             }).build();
 
 
@@ -93,23 +100,66 @@ public class CloudwalkerPlayerFragment extends VideoSupportFragment {
                 if (action.getId() == 7777) {
                     if (!isRoomMade && !isJoinRoom) {
                         if (currentUrl.isEmpty()) {
-                            Toast.makeText(getActivity(), "Please play any video to make a room ", Toast.LENGTH_SHORT).show();
+                            showToast("Please play any video to make a room ");
                         } else {
                             makeRoom(action);
                         }
                     } else if (isJoinRoom) {
-                        Toast.makeText(getActivity(), "Already Join a room with id = " + roomId, Toast.LENGTH_SHORT).show();
+                        showToast("Already Join a room with id = " + roomId);
+
                     } else {
-                        Toast.makeText(getActivity(), "Already Made a room with id = " + roomId + " , Please inform others to join room", Toast.LENGTH_SHORT).show();
+                        showToast("Already Made a room with id = " + roomId + " , Please inform others to join room");
                     }
                 } else if (action.getId() == 8888) {
                     if (isRoomMade) {
-                        Toast.makeText(getActivity(), "Already Made a room with id = " + roomId + " , Please inform others to join room", Toast.LENGTH_SHORT).show();
+                        showToast("Already Made a room with id = " + roomId + " , Please inform others to join room");
                     } else if (isJoinRoom) {
-                        Toast.makeText(getActivity(), "Already Join a room with id = " + roomId, Toast.LENGTH_SHORT).show();
+                        showToast("Already Join a room with id = " + roomId);
                     } else {
                         showDialogPopUp();
                     }
+                } else if (action.getId() == 9999) {
+
+                    if (roomId.isEmpty() || userName.isEmpty()) {
+                        showToast("Set UserName and RoomID to open QRCode.");
+                        return;
+                    }
+
+                    try {
+                        String text = ((VideoSupportActivity) getActivity()).getEthMac() + "~" + userName + "~" + roomId;
+//                        String text = "homeTv" + "~" + userName + "~" + roomId;
+                        MultiFormatWriter multiFormatWriter = new MultiFormatWriter();
+                        ImageView image = new ImageView(getActivity());
+                        BitMatrix bitMatrix = multiFormatWriter.encode(text, BarcodeFormat.QR_CODE, 400, 400);
+                        BarcodeEncoder barcodeEncoder = new BarcodeEncoder();
+                        Bitmap bitmap = barcodeEncoder.createBitmap(bitMatrix);
+                        image.setPadding(20, 20, 20, 20);
+                        image.setImageBitmap(bitmap);
+                        AlertDialog.Builder builder = new AlertDialog.Builder(getActivity(), R.style.Theme_AppCompat)
+                                .setMessage("Scan QR code to chat.")
+                                .setView(image)
+                                .setCancelable(true);
+
+                        AlertDialog dialog = builder.create();
+                        Window window = dialog.getWindow();
+                        if (window == null) return;
+                        window.setLayout(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+                        window.setGravity(Gravity.CENTER);
+                        window.setBackgroundDrawable(new ColorDrawable(getResources().getColor(R.color.transparent)));
+                        dialog.show();
+
+
+                        new Timer().schedule(new TimerTask() {
+                            @Override
+                            public void run() {
+                                dialog.dismiss();
+                            }
+                        }, 10000);
+
+                    } catch (WriterException e) {
+                        e.printStackTrace();
+                    }
+
                 } else if (action.getId() == R.id.lb_control_more_actions) {
                     selectSource();
                 } else {
@@ -119,42 +169,75 @@ public class CloudwalkerPlayerFragment extends VideoSupportFragment {
                     }
                 }
             }
+
+            @Override
+            protected void onUpdateBufferedProgress() {
+                Log.d(TAG, "onUpdateBufferedProgress: ");
+                super.onUpdateBufferedProgress();
+            }
+
+            @Override
+            protected void onPlayStateChanged() {
+                Log.d(TAG, "onPlayStateChanged: ");
+                super.onPlayStateChanged();
+            }
+
+            @Override
+            protected void onPreparedStateChanged() {
+                Log.d(TAG, "onPreparedStateChanged: ");
+                super.onPreparedStateChanged();
+            }
+
+            @Override
+            protected void onUpdateDuration() {
+                Log.d(TAG, "onUpdateDuration: ");
+                super.onUpdateDuration();
+            }
+
+            @Override
+            protected void onUpdateProgress() {
+                Log.d(TAG, "onUpdateProgress: ");
+                super.onUpdateProgress();
+            }
         };
         MediaSessionCompat mMediaSessionCompat = new MediaSessionCompat(getActivity(), MEDIA_SESSION_COMPAT_TOKEN);
         mMediaPlayerGlue.connectToMediaSession(mMediaSessionCompat);
         mMediaPlayerGlue.setHost(mHost);
         mMediaPlayerGlue.setMode(PlaybackControlsRow.RepeatAction.INDEX_NONE);
-
     }
 
 
     private void inputName() {
 
-        AlertDialog.Builder alertDialog = new AlertDialog.Builder(getActivity(), R.style.Theme_AppCompat);
-        alertDialog.setTitle("Enter Name");
-        alertDialog.setMessage("Enter Your Name");
+        AlertDialog.Builder builder = new AlertDialog.Builder(getActivity(), R.style.Theme_AppCompat);
+        builder.setTitle("Enter Name");
 
         final EditText input = new EditText(getActivity());
+        input.setPadding(20, 20, 20, 20);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(400, 400);
         lp.setMarginStart(20);
         lp.setMarginEnd(20);
         input.setLayoutParams(lp);
-        alertDialog.setView(input);
+        builder.setView(input);
 
-        alertDialog.setCancelable(false);
-
-        alertDialog.setPositiveButton("ok", new DialogInterface.OnClickListener() {
-            public void onClick(DialogInterface dialog, int which) {
-                userName = input.getText().toString();
-                if (!userName.isEmpty()) {
-                    dialog.dismiss();
-                } else {
-                    Toast.makeText(getActivity(), "Please enter your Name.", Toast.LENGTH_SHORT).show();
-                }
+        builder.setCancelable(false);
+        builder.setPositiveButton("ok", (dialog, which) -> {
+            userName = input.getText().toString();
+            if (!userName.isEmpty()) {
+                dialog.dismiss();
+            } else {
+                Toast.makeText(getActivity(), "Please enter your Name.", Toast.LENGTH_SHORT).show();
             }
         });
+        AlertDialog dialog = builder.create();
 
-        alertDialog.show();
+        Window window = dialog.getWindow();
+        if (window == null) return;
+        window.setLayout(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        window.setGravity(Gravity.CENTER);
+        window.setBackgroundDrawable(new ColorDrawable(getResources().getColor(R.color.transparent)));
+
+        dialog.show();
     }
 
     private void streamWriter(Action action) {
@@ -183,7 +266,6 @@ public class CloudwalkerPlayerFragment extends VideoSupportFragment {
                 .setPlayerState(playerStates)
                 .setTimeStamp(System.currentTimeMillis())
                 .setUrl(currentUrl).build().toByteArray());
-        return;
     }
 
     private void connectToMessagingServer() throws InterruptedException {
@@ -208,15 +290,9 @@ public class CloudwalkerPlayerFragment extends VideoSupportFragment {
 
     private void selectSource() {
         AlertDialog.Builder builder = new AlertDialog.Builder(getActivity(), R.style.Theme_AppCompat);
-        builder.setNegativeButton("Back", new DialogInterface.OnClickListener() {
-            @Override
-            public void onClick(DialogInterface dialog, int which) {
-                dialog.dismiss();
-            }
-        });
+        builder.setNegativeButton("Back", (dialog, which) -> dialog.dismiss());
         builder.setTitle("Select Source to play.");
         builder.setCancelable(true);
-
 
         final String[] animals = {
                 "http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
@@ -251,6 +327,13 @@ public class CloudwalkerPlayerFragment extends VideoSupportFragment {
         });
         // create and show the alert dialog
         AlertDialog dialog = builder.create();
+
+        Window window = dialog.getWindow();
+        if (window == null) return;
+        window.setLayout(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        window.setGravity(Gravity.CENTER);
+        window.setBackgroundDrawable(new ColorDrawable(getResources().getColor(R.color.transparent)));
+
         dialog.show();
     }
 
@@ -270,7 +353,7 @@ public class CloudwalkerPlayerFragment extends VideoSupportFragment {
     public void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode == DIALOG_REQUEST_CODE) {
-            if (resultCode == Activity.RESULT_OK) {
+            if (resultCode == Activity.RESULT_OK && data != null) {
                 roomId = data.getStringExtra("roomId");
                 joinRoom();
             }
@@ -290,6 +373,7 @@ public class CloudwalkerPlayerFragment extends VideoSupportFragment {
         try {
             mMediaPlayerGlue.disconnectToMediaSession();
             mainDispatcher.unsubscribe(roomId);
+            nc.closeDispatcher(mainDispatcher);
             nc.close();
         } catch (Exception e) {
             e.printStackTrace();
@@ -299,9 +383,9 @@ public class CloudwalkerPlayerFragment extends VideoSupportFragment {
 
     private void makeRoom(final Action action) {
         Random random = new Random();
-        roomId = String.format("%04d", random.nextInt(10000));
+        roomId = String.format(Locale.ENGLISH, "%04d", random.nextInt(10000));
         showToast("RoomID is " + roomId);
-        action.setIcon(getResources().getDrawable(R.drawable.broadcastblack));
+        action.setIcon(getResources().getDrawable(R.drawable.broadcastblack, null));
         Log.i(TAG, "makeRoom: " + roomId);
         action.setLabel1(String.valueOf(roomId));
         mMediaPlayerGlue.getControlsRow().getPrimaryActionsAdapter().notifyItemRangeChanged(3, 1);
@@ -311,7 +395,11 @@ public class CloudwalkerPlayerFragment extends VideoSupportFragment {
     }
 
     private void joinRoom() {
-        ((PlaybackControlsRow.MoreActions) mMediaPlayerGlue.getControlsRow().getPrimaryActionsAdapter().get(4)).setIcon(getResources().getDrawable(R.drawable.add_in_room_black));
+        ((PlaybackControlsRow.MoreActions) mMediaPlayerGlue.getControlsRow()
+                .getPrimaryActionsAdapter()
+                .get(4))
+                .setIcon(getResources().getDrawable(R.drawable.add_in_room_black, null));
+
         mMediaPlayerGlue.getControlsRow().getPrimaryActionsAdapter().notifyItemRangeChanged(4, 1);
         isJoinRoom = true;
         Log.i(TAG, "joinRoom: ");
@@ -321,7 +409,8 @@ public class CloudwalkerPlayerFragment extends VideoSupportFragment {
 
         Dispatcher d = nc.createDispatcher(new MessageHandler() {
             @Override
-            public void onMessage(Message msg) throws InterruptedException {
+            public void onMessage(Message msg) {
+
                 getActivity().runOnUiThread(new Runnable() {
                     @Override
                     public void run() {
@@ -371,68 +460,82 @@ public class CloudwalkerPlayerFragment extends VideoSupportFragment {
     }
 
     private void startReading() {
-        mainDispatcher = nc.createDispatcher(new MessageHandler() {
-            @Override
-            public void onMessage(Message msg) throws InterruptedException {
 
+        mainDispatcher = nc.createDispatcher(msg -> {
 
-                if (isRoomMade && msg.getReplyTo() != null && !msg.getReplyTo().isEmpty()) {
-                    Log.d(TAG, "onMessage: HADELING SYNCE MSG " + isRoomMade + "  " + ignoreSelf);
-                    Wewatch.PlayerStates playerStates = null;
-                    if (mMediaPlayerGlue.isPlaying()) {
-                        playerStates = Wewatch.PlayerStates.PLAY;
-                    } else {
-                        playerStates = Wewatch.PlayerStates.PAUSE;
-                    }
-                    nc.publish(msg.getReplyTo(),
-                            Wewatch.Messaging.newBuilder()
-                                    .setTitle(mMediaPlayerGlue.getTitle().toString())
-                                    .setSubtitle(mMediaPlayerGlue.getSubtitle().toString())
-                                    .setUrl(currentUrl)
-                                    .setPlayerState(playerStates)
-                                    .setCurrentPosition(mMediaPlayerGlue.getCurrentPosition())
-                                    .setTimeStamp(System.currentTimeMillis()).build().toByteArray());
-
-                } else if (ignoreSelf) {
-                    Log.d(TAG, "onMessage: IGNORE NOOP " + ignoreSelf);
-                    ignoreSelf = false;
-                    //noop
+            if (isRoomMade && msg.getReplyTo() != null && !msg.getReplyTo().isEmpty()) {
+                Log.d(TAG, "onMessage: HADELING SYNCE MSG " + isRoomMade + "  " + ignoreSelf);
+                Wewatch.PlayerStates playerStates;
+                if (mMediaPlayerGlue.isPlaying()) {
+                    playerStates = Wewatch.PlayerStates.PLAY;
                 } else {
-                    Log.d(TAG, "onMessage: HADELING RECEIVE MSG ");
-                    getActivity().runOnUiThread(new Runnable() {
-                        @Override
-                        public void run() {
-                            try {
-                                syncStream(Wewatch.Messaging.parseFrom(msg.getData()));
-                            } catch (InvalidProtocolBufferException e) {
-                                e.printStackTrace();
-                            }
-                        }
-                    });
+                    playerStates = Wewatch.PlayerStates.PAUSE;
                 }
+                nc.publish(msg.getReplyTo(),
+                        Wewatch.Messaging.newBuilder()
+                                .setTitle(mMediaPlayerGlue.getTitle().toString())
+                                .setSubtitle(mMediaPlayerGlue.getSubtitle().toString())
+                                .setUrl(currentUrl)
+                                .setPlayerState(playerStates)
+                                .setCurrentPosition(mMediaPlayerGlue.getCurrentPosition())
+                                .setTimeStamp(System.currentTimeMillis()).build().toByteArray());
+
+            } else if (ignoreSelf) {
+                Log.d(TAG, "onMessage: IGNORE NOOP " + ignoreSelf);
+                ignoreSelf = false;
+                //noop
+            } else {
+
+                getActivity().runOnUiThread(() -> {
+
+                    try {
+                        Wewatch.Chat chat = Wewatch.Chat.parseFrom(msg.getData());
+
+                        if (chat.getId() == null ||
+                                chat.getMessage() == null ||
+                                chat.getUserName() == null ||
+                                chat.getUserName().isEmpty() ||
+                                chat.getId().isEmpty()) {
+                            Log.d(TAG, "onMessage: PLAYER MESSAGE RECEIVE MSG ");
+                            // not a chat message check of player msg
+                            Wewatch.Messaging messaging = Wewatch.Messaging.parseFrom(msg.getData());
+                            syncStream(messaging);
+
+                        } else {
+                            Log.d(TAG, "onMessage: CHAT RECEIVE MSG ");
+                            User user = new User(chat.getId(), chat.getUserName(), "", true);
+                            model.Message message = new model.Message(((VideoSupportActivity) getActivity()).getEthMac(), user, chat.getMessage());
+//                                    model.Message message = new model.Message("homeTv", user, chat.getMessage());
+                            ((VideoSupportActivity) getActivity()).chat(message);
+
+                        }
+                    } catch (InvalidProtocolBufferException e) {
+                        e.printStackTrace();
+                    }
+                });
             }
         });
 
         mainDispatcher.subscribe(roomId);
-
     }
 
 
     private void syncStream(final Wewatch.Messaging value) {
 
         boolean isSourceDiff = false;
-        if (value.getTitle() != mMediaPlayerGlue.getTitle()) {
+        if (value.getTitle() != null && value.getTitle() != mMediaPlayerGlue.getTitle()) {
             mMediaPlayerGlue.setTitle(value.getTitle());
         }
-        if (value.getSubtitle() != mMediaPlayerGlue.getSubtitle()) {
+        if (value.getSubtitle() != null && value.getSubtitle() != mMediaPlayerGlue.getSubtitle()) {
             mMediaPlayerGlue.setSubtitle("WeWatch Group Id = " + roomId);
         }
-        if (!currentUrl.equals(value.getUrl())) {
+        if (value.getUrl() != null &&  !value.getUrl().isEmpty()  &&  !currentUrl.equals(value.getUrl())) {
             isSourceDiff = true;
             currentUrl = value.getUrl();
-        } else {
-//            mMediaPlayerGlue.seekTo((value.getCurrentPosition()) + (System.currentTimeMillis() - value.getTimeStamp()) + 500);
         }
+//        else {
+//            mMediaPlayerGlue.seekTo((value.getCurrentPosition()) + (System.currentTimeMillis() - value.getTimeStamp()) + 500);
+//        }
         switch (value.getPlayerState()) {
             case PLAY: {
                 if (isSourceDiff) {
@@ -561,34 +664,6 @@ public class CloudwalkerPlayerFragment extends VideoSupportFragment {
 
     // utility methods
     private void showToast(final String message) {
-        getActivity().runOnUiThread(new Runnable() {
-            @Override
-            public void run() {
-                Toast.makeText(getActivity(), message, Toast.LENGTH_SHORT).show();
-            }
-        });
+        getActivity().runOnUiThread(() -> Toast.makeText(getActivity(), message, Toast.LENGTH_SHORT).show());
     }
-
-    private String getEthMac() {
-        try {
-            return loadFileAsString("/sys/class/net/eth0/address").toUpperCase().substring(0, 17);
-        } catch (IOException e) {
-            e.printStackTrace();
-            return null;
-        }
-    }
-
-    private String loadFileAsString(String filePath) throws java.io.IOException {
-        StringBuffer fileData = new StringBuffer(1000);
-        BufferedReader reader = new BufferedReader(new FileReader(filePath));
-        char[] buf = new char[1024];
-        int numRead;
-        while ((numRead = reader.read(buf)) != -1) {
-            String readData = String.valueOf(buf, 0, numRead);
-            fileData.append(readData);
-        }
-        reader.close();
-        return fileData.toString();
-    }
-
 }
